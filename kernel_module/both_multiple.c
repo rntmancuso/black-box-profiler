@@ -26,23 +26,6 @@
 #include <asm/mman.h>
 
 
-/*#include "/media/disk/linux-4.1.15_2.0.0/mm/internal.h"
-
-  #include <linux/mman.h>
-  #include <linux/pagemap.h>
-  #include <linux/syscalls.h>
-  #include <linux/mempolicy.h>
-  #include <linux/page-isolation.h>
-  #include <linux/hugetlb.h>
-  #include <linux/falloc.h>
-  #include <linux/sched.h>
-  #include <linux/ksm.h>
-  #include <linux/fs.h>
-  #include <linux/file.h>
-  #include <linux/blkdev.h>
-  #include <linux/swap.h>
-  #include <linux/swapops.h>*/
-//#include <linux/fs.h>
 
 #define PROF_PROCFS_NAME                "memprofile"
 
@@ -60,7 +43,8 @@ struct file_operations  memprof_ops;
   page_addr field of struct Data*/
 struct params
 {
-	int size;
+	int *size;
+        int *vma_index;
 	int *buff;
 	bool shouldSkip;
 	pid_t pid;
@@ -275,9 +259,9 @@ int init_cpu_counter(void)
   
   }*/
 
-static int print_mem (pte_t *ptep, pgtable_t token ,  unsigned long addr,void *data)
+static int cacheability_modifier (pte_t *ptep, pgtable_t token ,  unsigned long addr,void *data)
 {
-	///struct Data *cdata = data;
+      
 	pte_t *pte = ptep;
 	size_t pfn;
 	pte_t newpte;
@@ -286,147 +270,160 @@ static int print_mem (pte_t *ptep, pgtable_t token ,  unsigned long addr,void *d
 	unsigned long phys; /*physical addr*/
 	/*char * page_v*/unsigned long *page_v;
         int i;
-	//printk ("\naddr is:%lu and skip is:%d\n", addr,skip);
-        for (i=0; i<cp.size; i++) //check whether current addr is in the list pf pages we want to skip
+	printk ("\naddr is:%x and skip is:%d\n", addr,skip);
+        for (i=0; i<cp.size[1]; i++) //check whether current addr is in the list pf pages we want to skip
 	{
-	  //printk("\naddr is:%lu and page_addr[%d] is:%lu\n",addr,i,((struct Data*)data)->page_addr[i]);
 		if (addr == ((struct Data*)data)->page_addr[i])
 		{
-		  //printk("skip is zero here\n");
+			//printk("skip is zero here\n");
 			skip =!(cp.shouldSkip);
 			break;
 		}  
 	}
-	//for (i=0; i<cp.size; i++)
-	//{
+   
 	if (skip) // this block keeps the page cacheable
 	{
-	  //printk("we skip (keep cacheable)!, skip is:%d\n",skip);
+		//printk("we skip (keep cacheable)!, skip is:%d\n",skip);
 	}
 	else //this block makes page noncacheable
 	{
-	  //    printk("we don't skip (noncacheable) and skip is:%d\n",skip);
-		print_debug(0,"\n\nbeginning of the else print_mem() with print_debug()",0);
+	  
 		//changing prot bits of vma to make it noncacheable
-		//cdata->vmas->vm_page_prot = pgprot_noncached(cdata->vmas->vm_page_prot);
 		((struct Data*)data)->vmas->vm_page_prot = pgprot_noncached(((struct Data*)data)->vmas->vm_page_prot);
-		//print_debug(0,"\nvm_page_prot after: cvma->vm_page_prot: %x", cdata->vmas->vm_page_prot);
+
 		//making page struct
 		page = pte_page(*pte);
 		phys = page_to_phys(page); //return physical addr
 		page_v = kmap(page);//kmap always returns a virtual address that addresses the desired page
+
 		//calculating pfn
 		pfn = pte_pfn(*pte); //with the old pte
 		//making new pte
-		//newpte = pfn_pte(pfn, cdata->vmas->vm_page_prot);
 		newpte = pfn_pte(pfn, ((struct Data*)data)->vmas->vm_page_prot);
-		/*//flushing L1 cache
-		  __cpuc_flush_user_range(addr,addr+PAGE_SIZE,cdata->vmas->vm_flags);
-		  printk("\nafter flush_cache_page\n");
-		  //flushing L 2 cache
-		  outer_cache.clean_range(phys,phys+PAGE_SIZE);//PHYSICAL ADDR
-		  // outer_clean_range(phys,phys+PAGE_SIZE);*/
-			
+
 		/* Perform PA-based invaluidation on L1 and L2 */
 		//invalidate_page_l2(phys);
 		invalidate_page_l1((ulong)page_v/*addr*/);
 		invalidate_page_l2(phys);
 		kunmap(page);
+
 		//setting new pte
 		set_pte_ext(pte, newpte, 0);
 		//flushing TLB for one page
 		// each time addr is added by 4KB 
 		__flush_tlb_page(((struct Data*)data)->vmas,addr);
-		//kunmap(page);
-		//printk("after flush tlb\n");
+    
 	}
-	// }
+       
 	return 0;
 }
+
+void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *task)
+{
+	data->vmas = mm->mmap; //not data.vms bc data is pointer // this is vma0 
+	printk("data->vmas->vm_start (vma 0) : %x\n", data->vmas->vm_start);
+
+	int i,count_vma = 0;
+	for (i = 0; i < cp.size[0] ; i++)
+	{
+		printk("i: %d\n",i);
+		for (; count_vma < mm->map_count; count_vma++)
+		{
+			printk("count_vma is: %d\n",count_vma);
+			printk("vm_start is:%x\n",data->vmas->vm_start);
+
+			if (count_vma == cp.vma_index[i])
+			{
+				(void) __mm_populate_mod(data->vmas->vm_start, data->vmas->vm_end - data->vmas->vm_start,1,task);
+				data->page_addr = kmalloc(cp.size[1]*sizeof(long),GFP_KERNEL);
+				int j;
+				for (j=0; j < cp.size[1]; j++)//making adresses we want to skip
+				{
+					data->page_addr[j] = data->vmas->vm_start+((cp.buff[j]-1)*PAGE_SIZE);
+				}
+				apply_to_page_range(data->vmas->vm_mm, data->vmas->vm_start, data->vmas->vm_end - data->vmas->vm_start,cacheability_modifier,data);
+				kfree(data->page_addr);
+				data->vmas = data->vmas->vm_next;
+				count_vma++;
+				break;
+			}
+			else
+			{
+				data->vmas = data->vmas->vm_next;
+			}
+	  
+		}
+	}
+}
+
+
+void get_vma (void)
+{
+	struct task_struct *task;
+	struct mm_struct *mm;
+	struct Data *data = kmalloc (sizeof(struct Data), GFP_KERNEL);
+	char task_name [TASK_COMM_LEN];
+
+	for_each_process(task)
+	{
+		get_task_comm(task_name,task);
+
+		if(task->pid == cp.pid)
+		{
+			printk("\n%s[%d]\n", task->comm, task->pid);
+
+			mm = task->mm;
+
+			printk("\nThis mm_struct has %d vmas.\n", mm->map_count);
+			printk("beginning of the heap is:%x\n",mm->start_brk);
+
+			data->vmas = mm->mmap; //not data.vms bc data is pointer // this is vma0
+			printk("data->vmas->vm_start (vma 0) : %x\n", data->vmas->vm_start);
+			vma_finder(mm,data,task);
+		}
+	
+	}
+	kfree(data);
+}
+
+void filling_params(void)
+{
+
+	/*cp has a field size with useful data and cp.buff which so far has a user ptr which is useless in kernel                                                                     
+	  we don't need to care about this stuff for cp.size and cp.shouldSkip. Those are not pointers*/
+	int* temp_size = cp.size;
+	/* cp.size is a kernel pointer (address) now, can be used as dst in cpy_from_usr */
+	cp.size = kmalloc(2*sizeof(int),GFP_KERNEL); //should we send this 2? (adding a field) or #define??????????????????? 
+	/* src should be user pointer () and dst should be kernel pointer*/
+	if(copy_from_user(cp.size,temp_size, 2*sizeof(int))) return -EFAULT;
+	printk("cp.size[0]: %d and cp.size[1]: %d\n", cp.size[0],cp.size[1]);
+
+	int* temp_buff = cp.buff;
+	cp.buff = kmalloc(cp.size[1]*sizeof(long),GFP_KERNEL);
+	if(copy_from_user(cp.buff,temp_buff, cp.size[1]*sizeof(long))) return -EFAULT;
+
+	int* temp_vma = cp.vma_index;
+	cp.vma_index = kmalloc(cp.size[0]*sizeof(int),GFP_KERNEL);
+	if(copy_from_user(cp.vma_index,temp_vma, cp.size[0]*sizeof(long))) return -EFAULT;
+}
+
 
 ssize_t memprofile_proc_write(struct file *file, const char __user *buffer,
 			      size_t count, loff_t *data)
 {
-	printk(KERN_ALERT "memprofile_proc_write");
-	int i;
-
+	printk(KERN_ALERT "memprofile_proc_write\n");
 	if(copy_from_user(&cp, buffer, sizeof(struct params))) return -EFAULT;
-	else {
-		/*cp has a field size with useful data and cp.buff which so far has a user ptr which is useless in kernel
-		  we don't need to care about this stuff for cp.size and cp.shouldSkip. Those are not pointers*/
-		int* temp_buff = cp.buff; //adress of user level
-		cp.buff = kmalloc(cp.size*sizeof(long),GFP_KERNEL);//now cp.buff has kernel pointer
-
-
-		if(copy_from_user(cp.buff,temp_buff, cp.size*sizeof(long))) return -EFAULT; /*src should be a user pointer and it is (temp_buff is user ptr)
-											      and dst is kernel ptr*/
-		else
-		{
-			printk("\nsize is %d\n",cp.size);
-			struct task_struct *task;
-	                struct mm_struct *mm;
-		        //struct vm_area_struct *data;
-			//struct vm_area_struct *prev = NULL;
-			//vm_flags_t newflags;
-		        struct Data *data = kmalloc (sizeof(struct Data), GFP_KERNEL);
-		        // myData *data = kmalloc (sizeof(myData), GFP_KERNEL);
-		        //struct vma_srea_struct data = vma;
-		        char task_name [TASK_COMM_LEN];
-			
-
-
-			for_each_process(task)
-		        {
-				get_task_comm(task_name,task);
-				//printk("task->pid is:%d\n", task->pid);
-				//printk("cp.pid is:%d\n", cp.pid);
-			    
-				if(task->pid == cp.pid)
-				  {
-					printk("\n%s[%d]\n", task->comm, task->pid);
-					mm = task->mm;
-					printk("\nThis mm_struct has %d vmas.\n", mm->map_count);
-					printk("test1\n");
-
-      					data->vmas = mm->mmap; //not data.vms bc data is pointer
-					for (data->vmas = mm->mmap ; data->vmas ; data->vmas = data->vmas->vm_next)
-					{
-					  printk("mm->brek and start :%lx %lx\n", mm->brk,data->vmas->vm_start);
-					  if (data->vmas->vm_start <= mm->brk && data->vmas->vm_end >= mm->start_brk) //finding heap region
-						{
-							print_debug(1,"\n[heap]",0);
-							printk("heap\n");
-							//newflags = data->vmas-> vm_flags | VM_LOCKED;
-							(void) __mm_populate_mod(data->vmas->vm_start, data->vmas->vm_end - data->vmas->vm_start,1,task);
-							printk("done with locking physical memory\n");
-							data->page_addr = kmalloc(cp.size*sizeof(long),GFP_KERNEL);
-							for (i=0; i<cp.size; i++) //making adresses we want to skip (keeping the cacheable or making noncacheable. debends on shouldSkip)
-								{
-								data->page_addr[i] = data->vmas->vm_start+((cp.buff[i]-1)*PAGE_SIZE);
-								//printk("data->page_addr[%d]=%lu\n",i, data->page_addr[i]);
-								}
-        
-							print_debug(1,"\nnumber of pages in heap:%ld\n",(data->vmas->vm_end-data->vmas->vm_start)/PAGE_SIZE);
-				  
-							apply_to_page_range(data->vmas->vm_mm, data->vmas->vm_start, data->vmas->vm_end - data->vmas->vm_start,print_mem, data);
-							kfree(data->page_addr);
-                                                        break;
-
-							   }
-					  
-					                 }
-
-					}
-			      	}
-                        kfree(data);
-	        	}
-		//	kfree(data);
-		}
+	else
+	{
+		filling_params();
+		printk("\nsize: %d cp.vma_index[0]: %d, cp.buff[0]: %d\n",cp.size,cp.vma_index[0],cp.buff[0]);
+		get_vma(); 
+	}
+	
 	kfree(cp.buff);
-	//kfree(data->page_addr);
-	//kfree(data);
-	//	}
-	//kfree(data);
+	kfree(cp.vma_index);
+	kfree(cp.size);
+	
 	return 0;
 }
 
@@ -473,33 +470,6 @@ static int mm_exp_load(void){
 	}
 
 
-	/*	struct task_struct *task;
-		struct mm_struct *mm;
-		//struct vm_area_struct *vma;
-		struct vm_area_struct *data;
-		//struct vma_srea_struct data = vma;  
-		char task_name [TASK_COMM_LEN];
-		// if (myflag == 1) {
-		printk("\nwith changing the cacheability"); 
-		for_each_process(task){
-		get_task_comm(task_name,task);
-		if(strncmp(task_name,"hello",TASK_COMM_LEN) == 0) {
-		printk("%s[%d]\n", task->comm, task->pid);
-		mm = task->mm;
-		printk("\nThis mm_struct has %d vmas.\n", mm->map_count);
-		data = mm->mmap;
-		printk ("\ndata->vm_page_prot: %x\n", data->vm_page_prot);
-		for (data = mm->mmap ; data ; data = data->vm_next){
-		if (data->vm_start <= mm->brk && data->vm_end >= mm->start_brk){
-		printk("\n[heap]");
-		printk ("\ndata->vm_page_prot: %x\n", data->vm_page_prot);
-		//print_mem(task);
-		apply_to_page_range(data->vm_mm, data->vm_start, data->vm_end - data->vm_start,print_mem, data);
-		}
-		}
-		}
-		//}
-		}*/
 	return 0;
 }
 
@@ -515,8 +485,8 @@ module_exit(mm_exp_unload);
 //module_param(myflag, int, 0);
 //MODULE_LICENSE("GPL");
 
-MODULE_AUTHOR ("Golsana Ghaemi");
-MODULE_DESCRIPTION ("make pages of a vma noncacheable");
+MODULE_AUTHOR ("Golsana Ghaemi, Renato Mancuso");
+MODULE_DESCRIPTION ("changin cacheability of mmeory regions");
 MODULE_LICENSE("GPL");
 
 
