@@ -9,7 +9,7 @@
  *            Renato Mancuso (BU)                                     *
  *                                                                    *
  **********************************************************************/
-
+///
 #define _GNU_SOURCE 
 
 #include <stdio.h>
@@ -69,23 +69,32 @@
 //#define BRKPOINT_INSTR (0xe7f001f0UL)
 #define BRKPOINT_INSTR (0xffffffffUL)
 
+#define VMA_LIST 0 //number of vma indexes will be sent to kernel
+#define PAGE_LIST 1 //number of pages of the vma we want to change its cacheability 
 
 /*for vma scanning*/
 #define mapped_file_fmt "%32s"
 #define max_num_vma 1024
 #define PAGE_SIZE 4096
 #define max_vma_mappedfile 33
-#define PARENT_CPU 2 //for ser_realtime
-#define CHILD_CPU 2 //for ser_realtime
+#define PARENT_CPU 2 //for set_realtime
+#define CHILD_CPU 2 //for set_realtime
 #define STAGES 2
 
+struct vmas_params
+{
+  int vma_index; //vma indices should send to kernel
+  int page_size; //size of each of above vmas
+};
 /* Structure of parameters that will be passed to the kernel */ 
 struct params
 {
-	int size;
-	long * buff;
-	bool shouldSkip;
-	pid_t pid;
+  int *size; // for size of vma_index and buff
+  //int *vma_index;
+  struct vmas_params *vma_param; 
+  long * buff;
+  bool shouldSkip;
+  pid_t pid;
 };
 
 struct trace_params
@@ -126,7 +135,7 @@ struct l2p__vma_struct {
 
 /*structure for keeping output of profiling mode*/
 struct page_stats{
-	int cycles;
+	unsigned long cycles;
 	int page_number;
 };
 
@@ -149,10 +158,9 @@ enum tracee_stage {
 volatile int done = 0;
 struct trace_params tparams;
 struct params kernel_params;
-static int  heap_size = 0;
 static int vma_idx = -1;
 static struct l2p__vma_struct vmas[max_num_vma];
-int samples; /*for holding summation of  cpu cycles for one page (in "sample_size" samples)*/
+unsigned long samples; /*for holding summation of  cpu cycles for one page (in "sample_size" samples)*/
 struct page_stats *page; // can I pass it to compare func of qsort in order not to have it global?
 /* ============================ */
 
@@ -197,12 +205,46 @@ int cmpfunc (const void * a, const void * b) {
 
 
 
-/*scanning heap region*/
+/*scanning virtual memory areas*/
 struct l2p__vma_struct *vma_alloc(void)
 {
 	if (++vma_idx == max_num_vma)
 		return NULL;
 	return vmas + vma_idx;
+}
+
+void vma_index_finder(char* mappedfile, int chunk_id, int len)
+{
+
+    static int index;
+    static int flag = 1;
+    if ((!(strcmp(mappedfile,"")) && flag))
+    {
+      flag = 0; // for just capturing first anon region
+      printf("anonymous and its index is : %d\n",chunk_id);
+      kernel_params.vma_param[index].vma_index = chunk_id;
+      kernel_params.vma_param[index].page_size = len/PAGE_SIZE;
+      printf(" kernel_params.vma_param[%d].vma_index: %d kernel_params.vma_param[%d].page_size : %d\n",index, kernel_params.vma_param[index].vma_index,index,kernel_params.vma_param[index].page_size);
+       index++;
+      }
+    if ((strcmp(mappedfile,"[heap]")) == 0)
+    {
+      printf("%s and its index is : %d\n",mappedfile,chunk_id);
+      kernel_params.vma_param[index].vma_index = chunk_id;
+      kernel_params.vma_param[index].page_size  = len/PAGE_SIZE;
+      printf(" kernel_params.vma_param[%d].vma_index: %d kernel_params.vma_param[%d].page_size: %d\n",index,kernel_params.vma_param[index].vma_index,index,kernel_params.vma_param[index].page_size);
+      index++;
+      }
+  /*else if ((strcmp(mappedfile,"[stack]")) == 0)                                                                                                           
+    {                                                                                                                                                       
+      printf("stack and its index is : %d\n",chunk_id);                                                                                                     
+      vma_index[index] = chunk_id;                                                                                                                          
+      }*/
+  else
+    {
+      //do nothing
+    }
+  
 }
 
 static struct l2p__vma_struct *
@@ -216,6 +258,7 @@ scan_proc_maps_line(int chunk_id, char const *buf, char const *defname)
 	mappedfile[0] = '\0';
 	rc = sscanf(buf, "%lx-%lx %s %lx %s %lu " mapped_file_fmt ,
 		    &start, &end, perms, &offset, dev, &inode, mappedfile);
+	
 	mappedfile[max_vma_mappedfile-1] = '\0';
 	if (rc < 6)
 		DBG_PRINT("Invalid line in maps file");//should be quit macro
@@ -228,6 +271,8 @@ scan_proc_maps_line(int chunk_id, char const *buf, char const *defname)
 	vma->len = end-start;
 	vma->offset = offset;
 	vma->inode = inode;
+	/*for finding vma indices and size of each vma*/
+	vma_index_finder(mappedfile,chunk_id,vma->end - vma->start);
 
 	/* FIXME broken broken broken !! */
 	strncpy(vma->perms, perms, 5);
@@ -261,7 +306,7 @@ scan_proc_maps_line(int chunk_id, char const *buf, char const *defname)
 		vma->heap = 1;
 		/*we are here, mean this vma (this line of maps file) is heap. so vma->start means
 		  start of heap and vma->end means end of heap. since vma->len is size_t and page_size is decima, I used end-start which are decimal*/            //printf("inside heap\n");
-		heap_size = (vma->end - vma->start)/PAGE_SIZE;
+		//heap_size = (vma->end - vma->start)/PAGE_SIZE;
 		//heap_size = 10;
 		
 	}
@@ -269,7 +314,7 @@ scan_proc_maps_line(int chunk_id, char const *buf, char const *defname)
 	return vma; //just one line/entry of maps file (/proc/PID/maps)
 }
 
-/*can't we have just one func for this read and scan? also just get heap entry? is better to keep generic?*/
+
 void read_proc_maps_file(pid_t pid) 
 {
 	struct l2p__vma_struct *vma; // for getting one line of maps file (after calling scan_proc_maps_line
@@ -383,7 +428,7 @@ pid_t run_debuggee(char * program_name, char * arguments [])
 	{
 	        set_realtime(2, CHILD_CPU);
 
-		setenv("MALLOC_TOP_PAD_", "1400000", 1);
+		//setenv("MALLOC_TOP_PAD_", "1400000", 1);
 		
 		/*Allow tracing of this process*/
 		if (ptrace(PTRACE_TRACEME, 0, 0, 0) < 0)
@@ -535,10 +580,8 @@ void handle_trace_event(pid_t pid, int wstat)
 			  tparams.symbol, tparams.brkpnt_addr[TRACEE_ENTRY]);
 		
 		tparams.brkpnt_data[TRACEE_ENTRY] =  set_breakpoint(pid, tparams.brkpnt_addr[TRACEE_ENTRY]);// ENTRY means entry of the function we are gonna set bp at
-		//heap can't be scanned here since at this point there's no heap
-		//if(!heap_size)
-		//read_proc_maps_file(pid);//here size of heap should be set
-		//DBG_PRINT("heap_size is:%d\n",heap_size);
+		//VMAs can't be scanned here since at this point there's no heap
+
 		if(ptrace(PTRACE_CONT, pid, NULL, NULL) < 0){
 			DBG_PRINT("Unable to resume tracee. Exiting.");
 			exit(EXIT_FAILURE);
@@ -552,17 +595,22 @@ void handle_trace_event(pid_t pid, int wstat)
 	case TRACEE_ENTRY:		
 		DBG_PRINT("Process reached breakpoint at %s\n", tparams.symbol);
 	
-	        if (!heap_size) /*has heap already been scanned?*/
-			read_proc_maps_file(pid); /*if no (heap_size = 0) scan it*/
-		DBG_PRINT("heap_size after hitting the first bp is:%d\n",heap_size);
+
+		if (!kernel_params.vma_param[0].page_size) /*have VMAs already been scanned?*/
+		  {
+		    read_proc_maps_file(pid); 
+		  }
+		
                 /*interacting with kernel*/
 		/*writing in proc file for calling desired function from kernel module*/
                 kernel_params.pid = tparams.pid;
+	       
 		procfd = open("/proc/memprofile", O_RDWR);
 		if(procfd < 0) {
 			DBG_PRINT("Unable to open procfile. Are you root?");
 		}
 		write(procfd, &kernel_params, 1* sizeof(struct params));
+		close(procfd);
 		//DBG_PRINT("done with interacting with kernel\n");
 		
 		/* Restore the original value at the breakpoint so
@@ -700,12 +748,21 @@ int main(int argc, char* argv[])
 	//int output[];
 	//struct page_stats *page; // I cant malloc here, i dont have heap size
 	FILE* fptr = fopen("output.csv","w");
-	if (fptr == NULL)
-	  return -1;
-        FILE* fprof = fopen("profiling.csv","w");
+	/*if (fptr == NULL)
+	  return -1;*/
+        /*FILE* fprof = fopen("profiling.csv","w");
 	if(fprof == NULL)
-	return -1;
-	//kernel_params.buff = malloc(kernel.size*sizeof(long));
+	return -1;*/
+       
+
+	/* Parse command line parameters. Just as an example, this
+	 * program accepts a parameter -e <value> and if specified it
+	 * will print the value passed. It also accepts a parameter -s
+	 * <symbol name> for the function to time.  Other than that,
+	 * the executable to run and its parameters is expected at the
+	 * end of the command line after all the optional
+	 * arguments. */
+	
 	while((opt = getopt(argc, argv, ":s:e:c:n:m:h")) != -1) {
 		switch (opt) {
 		case 'h':
@@ -746,34 +803,8 @@ int main(int argc, char* argv[])
 	}
 
 	
-	/* Parse command line parameters. Just as an example, this
-	 * program accepts a parameter -e <value> and if specified it
-	 * will print the value passed. It also accepts a parameter -s
-	 * <symbol name> for the function to time.  Other than that,
-	 * the executable to run and its parameters is expected at the
-	 * end of the command line after all the optional
-	 * arguments. */
 
 
-	/*filling page numbers which should be sent to kernel*/
-	//kernel_params.buff = malloc(kernel_params.size*sizeof(long));//if is profiling mode, size is one
-	//printf("strlen(page_numbers) is: %d\n",strlen(page_numbers));
-	/*for (int i = 0; i < strlen(page_numbers); i++)
-	  {
-	  if(!(page_numbers[i] == ','))
-	  {
-	  //printf("%c\n",page_numbers[i]);
-	  //for (int j = i-j; j < kernel_params.size; j++)
-
-	  kernel_params.buff[i-i/2] = strtol(&page_numbers[i], NULL, 0);
-	  }
-	  }
-	  for (int i = 0; i < kernel_params.size; i++)
-	  {
-	  printf("%lu\n",kernel_params.buff[i]);
-	  }*/
-
-	//if () checking sample size
 
 	/* Check that the symbol to observe has been specified */
 	if (!tparams.symbol) {
@@ -810,30 +841,29 @@ int main(int argc, char* argv[])
 	if (tparams.brkpnt_addr[TRACEE_ENTRY] == (void *)-1) {
 		return EXIT_FAILURE;
 	}
-	//if (strcmp(mode,"profile") == 0){
-	//	printf("mode is: %s\n",mode);
-	/*switch (strcmp(mode,"profiling")){
-	  case 0: //profiling mode*/
 
-	// FIRST PART IS FPR PROFILING (JUST ONE PAGE AT A TIME)
-	/*for testing profiling mode i have this here, hardcoded. after fixing i should change the place
-and also get the mode (profiling or running) from user I think*/
 
 	/******************************* FIRST MODE ****************************************/
 
-	kernel_params.size = 1; //profiling mode
-	kernel_params.buff = malloc(kernel_params.size*sizeof(long));//if is profiling mode, size is one   
-
-        set_realtime(1, PARENT_CPU); // for parent
-
-
-	do
+	kernel_params.size = malloc(2*sizeof(int)); 
+	kernel_params.size[PAGE_LIST] = 1; //profiling mode (one pafe at a time)- size of buff, page index
+	kernel_params.buff = malloc(kernel_params.size[PAGE_LIST]*sizeof(long));//if is profiling mode, size is one
+	kernel_params.size[VMA_LIST] = 2; //for now...size of vma_index (just heap and first anon)
+	kernel_params.vma_param = malloc(kernel_params.size[VMA_LIST]*sizeof(struct vmas_params));
+	kernel_params.vma_param[0].page_size = 0;
+	set_realtime(1, PARENT_CPU); // for parent
+	int count_vma = 0;
+        
+	do //this part is for covering each vma from vma_index  
 	{
+	   count = 0;
+	
+	  do //this part is for coverin "all pages" of one region
+	    {
 		samples = 0;
+		printf("sample_size: %d\n",sample_size);
 		*(kernel_params.buff) = count; //because is profiling, one page at a time kernel_params.buff[0]
-		//printf("count (which is page number to be sent to kernel) before the for loop is: %d\n",count);
-		//kernel_params.buff = malloc(kernel_params.size*sizeof(long));//if is profiling mode, size is one
-		//		      kernel_params.buff[0] = count; //page number that is gonna be sent to kernel
+	       
 		for (int j = 0; j < sample_size; j++)
 		{
 			
@@ -851,15 +881,29 @@ and also get the mode (profiling or running) from user I think*/
 		}
 			     
 		if (count == 0) //first round of execution, I think for page = 0
-			page = malloc(heap_size*sizeof(struct page_stats));
+		  page = malloc(kernel_params.vma_param[count_vma].page_size*sizeof(struct page_stats));//as many pages as in this VMA
 		page[count].cycles = samples/sample_size; 
 		page[count].page_number = count; //(Don't laugh at me Renato if you are seeing this comment): . and not -> altho page is pointer to struct. bc page[i] is content, is not pointer
-		printf("page[%d].cycles = %d   page[%d].page_number = %d\n",count,page[count].cycles,count,page[count].page_number);
+		printf("vma # %d, page[%d].cycles = %lu, page[%d].page_number = %d\n",kernel_params.vma_param[count_vma].vma_index,count,page[count].cycles,count,page[count].page_number);
 		count++;
 	
 		//  printf("heap_size is:%d   count is :%d\n",heap_size,count);
 	}
-	while(count < heap_size);
+	while(count < kernel_params.vma_param[count_vma].page_size);
+	  // end of one VMA 
+       
+        qsort(page,kernel_params.vma_param[count_vma].page_size,sizeof(struct page_stats),cmpfunc);
+	for (int i = 0; i < kernel_params.vma_param[count_vma].page_size; i++){
+	  printf("cycle: %lu and page number: %d\n", page[i].cycles, page[i].page_number);
+	  //fprintf(fprof,"%d,%lu\n",page[i].page_number, page[i].cycles);
+	}
+	free(page);
+	//fclose(fprof);
+	//could be  *(kernel_params.vma_param.vma_index) = temp[count_vma+1]; ????
+	//kernel_params.vma_param[0].vma_index = temp[count_vma+1];
+	count_vma++;
+	}
+        while(count_vma < kernel_params.size[VMA_LIST]);
 
        
 
@@ -871,25 +915,27 @@ and also get the mode (profiling or running) from user I think*/
 
 	//printf("page[8].cycles = %d and page[8].page_number = %d\n", page[8].cycles,page[8].page_number);
 
-	qsort(page,heap_size,sizeof(struct page_stats),cmpfunc); //page is sorted array after this, increasingly based on cycles
+	/*qsort(page,kernel_params.vma_param.page_size[0],sizeof(struct page_stats),cmpfunc); //page is sorted array after this, increasingly based on cycles
 	// for cacheable mode we want max cycles (end of array, max cycles) and vice versa for noncacheable mode
-	for (int i = 0; i < heap_size; i++){
+	for (int i = 0; i < kernel_params.vma_param.page_size[0]; i++){                printf("cycle: %d and page number: %d\n", page[i].cycles, page[i].page_number);                                                                                           
+                fprintf(fprof,"%d,%d\n",page[i].page_number, page[i].cycles);                                                                                                             
+                }
 		printf("cycle: %d and page number: %d\n", page[i].cycles, page[i].page_number);
 	        fprintf(fprof,"%d,%d\n",page[i].page_number, page[i].cycles);
-	}
+		}*/
 
-	fclose(fprof);
+	//fclose(fprof);
 	
-        int output[heap_size];
+	/*        int output[heap_size];
 	free(kernel_params.buff); //probably should change its place
 	kernel_params.shouldSkip = 0; //bc we want to have all pages noncacheable except those in profiling info
-	for (int i = 1; i <= heap_size; i++)
+	for (int i = 1; i <= heap_size; i++) //i is number of pages
 	  {
 	    samples = 0;
 	    sample_size = 1; //for now
 	    
-	    kernel_params.size = i;
-	    kernel_params.buff = malloc(kernel_params.size*sizeof(long));
+	    kernel_params.size[0] = i; not size[0] but size[1]
+	    kernel_params.buff = malloc(kernel_params.size[0]*sizeof(long)); size[1]
 	    
 	    //this parts for now just makes sense for nonc mode.when all other problems are fixed I will complete the design of this part
 	        for(int j = 0; j <  i; j++)
@@ -924,7 +970,7 @@ and also get the mode (profiling or running) from user I think*/
 	   
 	    
 	     }
-	fclose(fptr);
+	     fclose(fptr);*/
 	/*for (int i = 1; i <= heap_size; i++)
 	  {
 	    DBG_PRINT("%d , %d\n",i, output[i]);
