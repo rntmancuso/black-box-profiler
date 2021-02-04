@@ -284,63 +284,6 @@ exit:
 	return err;
 }
 
-static int migrate_page_list(struct page ** pages, int nr_pages,
-			     new_page_t get_new_page,
-			     enum migrate_mode mode)
-{
-	int res;
-	int nr_failed = 0;
-	int nr_succeeded = 0;
-	int i;
-
-	int swapwrite = current->flags & PF_SWAPWRITE;
-
-	if (!swapwrite)
-		current->flags |= PF_SWAPWRITE;
-
-	for (i = 0; i < nr_pages; ++i) {
-		struct page * page = pages[i];
-		cond_resched();
-
-		if(PageHuge(page)) {
-			res = unmap_and_move_huge_page(get_new_page,
-					 NULL, 0, page, 1, mode, 0);
-		} else {
-			res = unmap_and_move(get_new_page, NULL, 0,
-					     page, 1, mode, 0);
-		}
-
-		if (res != MIGRATEPAGE_SUCCESS) {
-			pr_info("Migration for PA 0x%llx failed: res = %d\n",
-				page_to_phys(page), res);
-		}
-
-		switch(res) {
-		case -ENOMEM:
-		case -EAGAIN:
-			nr_failed++;
-			break;
-		case MIGRATEPAGE_SUCCESS:
-			nr_succeeded++;
-			break;
-		default:
-			nr_failed++;
-			break;
-		}
-
-	}
-
-	if (!swapwrite)
-		current->flags &= ~PF_SWAPWRITE;
-
-	if (nr_succeeded)
-		count_vm_events(PGMIGRATE_SUCCESS, nr_succeeded);
-	if (nr_failed)
-		count_vm_events(PGMIGRATE_FAIL, nr_failed);
-
-	return nr_failed;
-
-}
 
 /* Attempt to migrate a single page in the target. NEW IMPLEMENTATION!  */
 static int migrate_to_pool(struct task_struct * target, int vm_target,
@@ -399,6 +342,64 @@ exit:
 }
 
 #if 0
+static int migrate_page_list(struct page ** pages, int nr_pages,
+			     new_page_t get_new_page,
+			     enum migrate_mode mode)
+{
+	int res;
+	int nr_failed = 0;
+	int nr_succeeded = 0;
+	int i;
+
+	int swapwrite = current->flags & PF_SWAPWRITE;
+
+	if (!swapwrite)
+		current->flags |= PF_SWAPWRITE;
+
+	for (i = 0; i < nr_pages; ++i) {
+		struct page * page = pages[i];
+		cond_resched();
+
+		if(PageHuge(page)) {
+			res = unmap_and_move_huge_page(get_new_page,
+					 NULL, 0, page, 1, mode, 0);
+		} else {
+			res = unmap_and_move(get_new_page, NULL, 0,
+					     page, 1, mode, 0);
+		}
+
+		if (res != MIGRATEPAGE_SUCCESS) {
+			pr_info("Migration for PA 0x%llx failed: res = %d\n",
+				page_to_phys(page), res);
+		}
+
+		switch(res) {
+		case -ENOMEM:
+		case -EAGAIN:
+			nr_failed++;
+			break;
+		case MIGRATEPAGE_SUCCESS:
+			nr_succeeded++;
+			break;
+		default:
+			nr_failed++;
+			break;
+		}
+
+	}
+
+	if (!swapwrite)
+		current->flags &= ~PF_SWAPWRITE;
+
+	if (nr_succeeded)
+		count_vm_events(PGMIGRATE_SUCCESS, nr_succeeded);
+	if (nr_failed)
+		count_vm_events(PGMIGRATE_FAIL, nr_failed);
+
+	return nr_failed;
+
+}
+
 /* Attempt to migrate a single page in the target */
 static int migrate_to_pool(struct task_struct * target, int vm_target,
 			   int pg_target_start, int pg_target_end)
