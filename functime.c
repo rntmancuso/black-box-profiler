@@ -68,9 +68,7 @@
 /* The assembly opcode to use when inserting a breakpoint */
 //#define BRKPOINT_INSTR (0xe7f001f0UL)
 #define BRKPOINT_INSTR (0xffffffffUL)
-
-#define VMA_LIST 0 //number of vma indexes will be sent to kernel
-#define PAGE_LIST 1 //number of pages of the vma we want to change its cacheability 
+ 
 
 /*for vma scanning*/
 #define mapped_file_fmt "%32s"
@@ -81,30 +79,31 @@
 #define CHILD_CPU 2 //for set_realtime
 #define STAGES 2
 
-struct vmas_params
+struct vma_page_parameter
 {
-  int vma_index; //vma indices should send to kernel
-  int page_size; //size of each of above vmas
+  int vma_index; // which VMA area
+  int total_pages; //number of pages in a specific VMA
+  int *page_index; //page indices should be sent to kernel for this specific vma
+  int page_number; //number of pages should be sent to the kernel for this specific vma
+  unsigned int operation; //lsb could be nc/c and msb could be the method, shouldSkip is inside operation 
 };
 /* Structure of parameters that will be passed to the kernel */ 
 struct params
 {
-  int *size; // for size of vma_index and buff
-  //int *vma_index;
-  struct vmas_params *vma_param; 
-  long * buff;
-  bool shouldSkip;
+  int vma_numbers; // number(index) of vmas are going to be sent/touched --I should remove
+  struct vma_page_parameter *touched_vmas; 
   pid_t pid;
 };
 
 struct trace_params
 {
 	char * symbol;
-	pid_t pid;
+       	pid_t pid;
 	long brkpnt_data [STAGES];
 	void * brkpnt_addr [STAGES];
 	unsigned long t_start;
 	unsigned long t_end;
+	char* exe_name;//we need it for finding text region for vma indexes
 };
 
 /*struct for keeping each line of process' mapping*/
@@ -133,11 +132,19 @@ struct l2p__vma_struct {
 	//struct bitmask tolock;
 };
 
-/*structure for keeping output of profiling mode*/
-struct page_stats{
+
+struct profiled_vma_page{
+	int page_index;
 	unsigned long cycles;
-	int page_number;
 };
+	
+/*structure for keeping output of profiling mode-not relatedd to kernel*/
+struct profiler_output{
+	int vma_index;
+	struct profiled_vma_page* page;
+	unsigned long* output;
+};
+
 
 /* Enum to keep track of the current stage in the execution of the
  * tracee */
@@ -158,10 +165,11 @@ enum tracee_stage {
 volatile int done = 0;
 struct trace_params tparams;
 struct params kernel_params;
+struct vma_page_parameter* temp;
 static int vma_idx = -1;
 static struct l2p__vma_struct vmas[max_num_vma];
 unsigned long samples; /*for holding summation of  cpu cycles for one page (in "sample_size" samples)*/
-struct page_stats *page; // can I pass it to compare func of qsort in order not to have it global?
+struct profiler_output *profiled_vmas; // can I pass it to compare func of qsort in order not to have it global?
 /* ============================ */
 
 
@@ -200,7 +208,7 @@ void set_realtime(int prio, int cpu)
 
 /*compare function for qsort*/
 int cmpfunc (const void * a, const void * b) {
-	return ( ((struct page_stats*)a)->cycles - ((struct page_stats*)b)->cycles);
+	return ( ((struct profiled_vma_page*)a)->cycles - ((struct profiled_vma_page*)b)->cycles);
 }
 
 
@@ -213,47 +221,69 @@ struct l2p__vma_struct *vma_alloc(void)
 	return vmas + vma_idx;
 }
 
-void vma_index_finder(char* mappedfile, int chunk_id, int len)
+void vma_index_finder(struct l2p__vma_struct *vma) //how can i make this function better?
 {
-
-    static int index;
+  // with this assumption that vma numbers are in increasing order
+    static int index; //touched_vmas indexes
     static int flag = 1;
-    if ((!(strcmp(mappedfile,"")) && flag))
+    int len = vma->end - vma->start;
+    
+    if ((!(strcmp(vma->mappedfile,"anonymous")) && flag))
     {
       flag = 0; // for just capturing first anon region
-      printf("anonymous and its index is : %d\n",chunk_id);
-      kernel_params.vma_param[index].vma_index = chunk_id;
-      kernel_params.vma_param[index].page_size = len/PAGE_SIZE;
-      printf(" kernel_params.vma_param[%d].vma_index: %d kernel_params.vma_param[%d].page_size : %d\n",index, kernel_params.vma_param[index].vma_index,index,kernel_params.vma_param[index].page_size);
-       index++;
-      }
-    if ((strcmp(mappedfile,"[heap]")) == 0)
-    {
-      printf("%s and its index is : %d\n",mappedfile,chunk_id);
-      kernel_params.vma_param[index].vma_index = chunk_id;
-      kernel_params.vma_param[index].page_size  = len/PAGE_SIZE;
-      printf(" kernel_params.vma_param[%d].vma_index: %d kernel_params.vma_param[%d].page_size: %d\n",index,kernel_params.vma_param[index].vma_index,index,kernel_params.vma_param[index].page_size);
+      printf("anonymous and its index (vma_index) is : %d\n",vma->chunk_id);
+      /*kernel_params.touched_vmas[index].vma_index*/temp[index].vma_index = vma->chunk_id;
+      /*kernel_params.touched_vmas[index].total_pages*/temp[index].total_pages = len/PAGE_SIZE;
+      printf("beginning of the anonymous:%lx and the end is: %lx\n",vma->start,vma->end);
+      printf("temp[%d].vma_index: %d, temp[%d].total_pages: %d\n",index, temp[index].vma_index,index,temp[index].total_pages);
       index++;
       }
-  /*else if ((strcmp(mappedfile,"[stack]")) == 0)                                                                                                           
-    {                                                                                                                                                       
-      printf("stack and its index is : %d\n",chunk_id);                                                                                                     
-      vma_index[index] = chunk_id;                                                                                                                          
+    
+    else if ((strcmp(vma->mappedfile,"[heap]")) == 0)
+    {
+      printf("%s and its index is : %d\n",vma->mappedfile,vma->chunk_id);
+      temp[index].vma_index = vma->chunk_id;
+      temp[index].total_pages = len/PAGE_SIZE;
+      printf("beginning of the heap:%lx and the end is: %lx\n",vma->start,vma->end);
+      printf("temp[%d].vma_index: %d, temp[%d].total_pages: %d\n",index,temp[index].vma_index,index,temp[index].total_pages);
+      index++;
+      }
+
+    else if  ((strcmp(vma->mappedfile,tparams.exe_name)) == 0 && vma->executable == -1)
+      {
+	printf("text and its index is : %d\n",vma->chunk_id);
+	temp[index].vma_index = vma->chunk_id;
+	temp[index].total_pages = len/PAGE_SIZE;
+	printf("temp[%d].vma_index: %d, temp[%d].total_pages: %d\n",index,temp[index].vma_index,index,temp[index].total_pages);
+	index++;
+      }
+    
+    /* else if ((strcmp(vma->mappedfile,"[stack]")) == 0)                                                                                                           
+    {
+      printf("%s and its index is : %d\n",vma->mappedfile,vma->chunk_id);
+      temp[index].vma_index = vma->chunk_id;
+      temp[index].total_pages = len/PAGE_SIZE;
+      printf("beginning of the stack:%lx and the end is: %lx\n",vma->start,vma->end);
+      printf("temp[%d].vma_index: %d, temp[%d].total_pages: %d\n",index,temp[index].vma_index,index,temp[index].total_pages);
+      index++;
       }*/
+    
   else
     {
       //do nothing
     }
-  
+    //printf("sizeof( kernel_params.touched_vmas):%d\n", sizeof(kernel_params.touched_vmas));
+    printf("sizeof(temp):%d\n",sizeof(temp));
 }
 
 static struct l2p__vma_struct *
-scan_proc_maps_line(int chunk_id, char const *buf, char const *defname)
+scan_proc_maps_line(int chunk_id, char const *buf)
 {
 	unsigned long start, end, offset, inode;
 	char *p, perms[5], dev[6], mappedfile[max_vma_mappedfile];
 	int rc;
 	struct l2p__vma_struct *vma;
+
 	/* FIXME This is horribly broken */
 	mappedfile[0] = '\0';
 	rc = sscanf(buf, "%lx-%lx %s %lx %s %lu " mapped_file_fmt ,
@@ -271,10 +301,8 @@ scan_proc_maps_line(int chunk_id, char const *buf, char const *defname)
 	vma->len = end-start;
 	vma->offset = offset;
 	vma->inode = inode;
-	/*for finding vma indices and size of each vma*/
-	vma_index_finder(mappedfile,chunk_id,vma->end - vma->start);
 
-	/* FIXME broken broken broken !! */
+        /* FIXME broken broken broken !! */
 	strncpy(vma->perms, perms, 5);
 	strncpy(vma->dev, dev, 6);
 	if (strlen(mappedfile) > 0) {
@@ -290,7 +318,7 @@ scan_proc_maps_line(int chunk_id, char const *buf, char const *defname)
 		}
 	}
 	else
-		snprintf(vma->mappedfile, max_vma_mappedfile, "[%s]", defname);
+		snprintf(vma->mappedfile, max_vma_mappedfile, "%s", "anonymous");
         
 	vma->mappedfile[max_vma_mappedfile-1] = '\0';
 	vma->readable = (perms[0] == 'r');
@@ -301,17 +329,14 @@ scan_proc_maps_line(int chunk_id, char const *buf, char const *defname)
 	vma->mprotected = 0;
 	vma->reserved = 0;
 	vma->stack = (strcmp(mappedfile, "[stack]") == 0);
-       
-	if (strcmp(mappedfile, "[heap]") == 0) { //if we get here means we are scanning the [heap] line of all lines of maps file
+        if (strcmp(mappedfile, "[heap]") == 0)  
 		vma->heap = 1;
-		/*we are here, mean this vma (this line of maps file) is heap. so vma->start means
-		  start of heap and vma->end means end of heap. since vma->len is size_t and page_size is decima, I used end-start which are decimal*/            //printf("inside heap\n");
-		//heap_size = (vma->end - vma->start)/PAGE_SIZE;
-		//heap_size = 10;
-		
-	}
+	       	
 
-	return vma; //just one line/entry of maps file (/proc/PID/maps)
+	/*for finding vma indices and size of each vma*/
+	vma_index_finder(vma);
+
+	return vma; 
 }
 
 
@@ -320,7 +345,7 @@ void read_proc_maps_file(pid_t pid)
 	struct l2p__vma_struct *vma; // for getting one line of maps file (after calling scan_proc_maps_line
 	unsigned int nvma = 0;
 	char buf[256];
-	const char *defname = "unknown";
+	//const char *defname = "unknown";
 	char path[100] ;
 	sprintf(path,"/proc/%d/maps",pid);
 	FILE *f = fopen(path, "r");
@@ -338,17 +363,16 @@ void read_proc_maps_file(pid_t pid)
 	
 
 		buf[255] = '\0';
-		buf[strlen(buf)-1] = '\0'; //why both?
+		buf[strlen(buf)-1] = '\0'; 
 		//DBG_PRINT("maps #%-3u: \"%s\"\n", nvma, buf); //the whole line is in buf as a string
-		vma = scan_proc_maps_line(nvma, buf, defname);
+		vma = scan_proc_maps_line(nvma, buf);
 		++nvma;
-
-		defname = vma->mappedfile;
 	}
-       
 
 	fclose(f);
-
+	kernel_params.touched_vmas[0].vma_index = temp[0].vma_index;
+	kernel_params.touched_vmas[0].total_pages = temp[0].total_pages;
+       
 }
 /*end of scanning heap */
 
@@ -421,7 +445,7 @@ pid_t run_debuggee(char * program_name, char * arguments [])
        
 	/* First, attempt a fork to spawn a child process */
 	pid_t child_pid = fork();
-        printf("after fork\n");
+      
 	/* PID = 0 means we are in the child process after a
 	 * successful fork */
 	if(child_pid == 0)
@@ -595,12 +619,12 @@ void handle_trace_event(pid_t pid, int wstat)
 	case TRACEE_ENTRY:		
 		DBG_PRINT("Process reached breakpoint at %s\n", tparams.symbol);
 	
-
-		if (!kernel_params.vma_param[0].page_size) /*have VMAs already been scanned?*/
+		//bc if is zero means we havnt gone through vma_scanning part
+		if (!kernel_params.touched_vmas[0].total_pages) /*have VMAs already been scanned?*/
 		  {
-		    read_proc_maps_file(pid); 
+		    read_proc_maps_file(pid);
 		  }
-		
+	       
                 /*interacting with kernel*/
 		/*writing in proc file for calling desired function from kernel module*/
                 kernel_params.pid = tparams.pid;
@@ -611,7 +635,7 @@ void handle_trace_event(pid_t pid, int wstat)
 		}
 		write(procfd, &kernel_params, 1* sizeof(struct params));
 		close(procfd);
-		//DBG_PRINT("done with interacting with kernel\n");
+		DBG_PRINT("done with interacting with kernel\n");
 		
 		/* Restore the original value at the breakpoint so
 		 * that the process can continue */
@@ -651,8 +675,10 @@ void handle_trace_event(pid_t pid, int wstat)
 		if(tparams.t_start > tparams.t_end)
 			printf("OVERFLOW: %lu\n",(0xFFFFFFFFUL-tparams.t_start)+tparams.t_end); 
 		samples += (tparams.t_end - tparams.t_start);
+
 		//printf("%lu,%ld\n",kernel_params.buff[kernel_params.size - 1], tparams.t_end - tparams.t_start);
 		//char c = getchar();
+
 		/* Restore the original value at the breakpoint so
 		 * that the process can continue */
 		if(ptrace(PTRACE_POKETEXT, pid, tparams.brkpnt_addr[stage], tparams.brkpnt_data[stage]) < 0) {
@@ -745,12 +771,14 @@ int main(int argc, char* argv[])
 	long e_value = -1;
 	//char *page_numbers;
 	char* mode;
+	unsigned int operation; //I need to have this bc touched_vmas hasnt been allocated yet
 	//int output[];
 	//struct page_stats *page; // I cant malloc here, i dont have heap size
-	FILE* fptr = fopen("output.csv","w");
-	/*if (fptr == NULL)
-	  return -1;*/
-        /*FILE* fprof = fopen("profiling.csv","w");
+/*	FILE* fptr = fopen("output.csv","w");
+	if (fptr == NULL)
+	return -1;*/
+
+	/*FILE* fprof = fopen("profiling.csv","w");
 	if(fprof == NULL)
 	return -1;*/
        
@@ -769,22 +797,23 @@ int main(int argc, char* argv[])
 			DBG_PRINT(HELP_STRING, argv[0]);
 			return EXIT_SUCCESS;
 			break;
-		case 'm': //this doesnt work rn
+			/*case 'm': //this doesnt work rn
 			mode = optarg; //either profiling or running
 			if(strcmp("profile",optarg) == 0)
-			{kernel_params.size = 1;
-				printf("mode is :%s and size is:%d\n",mode,kernel_params.size);}
+			{
+			  kernel_params.touched_vmas... = 1;
+			  printf("mode is :%s and size is:%d\n",mode,kernel_params.size);}
 			else if (strcmp("run",optarg) == 0)
-				kernel_params.size = 10;
+			  kernel_params.size = 10;
 			else
 				printf("wrong mode input\n");
-			break;
+				break;*/
 		case 'n': //number of samples
 			sample_size = strtol(optarg, NULL, 0);
 			break;
 		case 'c': //cacheabe : c = 1, noncacheable : c = 0
-			kernel_params.shouldSkip = strtol(optarg, NULL, 0);
-			printf("shouldSkip is : %d\n",kernel_params.shouldSkip);
+			operation = strtol(optarg, NULL, 0);
+			printf("operation is : %d\n",operation);
 			break;
 		case 's': //symbol which we are gonna put breakpoint on
 			tparams.symbol = optarg;
@@ -843,138 +872,171 @@ int main(int argc, char* argv[])
 	}
 
 
-	/******************************* FIRST MODE ****************************************/
 
-	kernel_params.size = malloc(2*sizeof(int)); 
-	kernel_params.size[PAGE_LIST] = 1; //profiling mode (one pafe at a time)- size of buff, page index
-	kernel_params.buff = malloc(kernel_params.size[PAGE_LIST]*sizeof(long));//if is profiling mode, size is one
-	kernel_params.size[VMA_LIST] = 2; //for now...size of vma_index (just heap and first anon)
-	kernel_params.vma_param = malloc(kernel_params.size[VMA_LIST]*sizeof(struct vmas_params));
-	kernel_params.vma_param[0].page_size = 0;
-	set_realtime(1, PARENT_CPU); // for parent
-	int count_vma = 0;
+
+	/******************************* FIRST MODE : one page of one vma at a time ****************************************/
+	tparams.exe_name = argv[tracee_cmd_idx];
+	kernel_params.vma_numbers = 1; //one vma at a time
+	//kernel_params.vma_numbers = 5; // for now is hardcoded to figure out how to get it (upper estimation)
+	temp = malloc(5*sizeof(struct vma_page_parameter));//it should be implemented by realloc, for now i will go with 5
+	// we can get mode from cmnd line, but if is profiling, is one page at a time
+	kernel_params.touched_vmas = malloc(kernel_params.vma_numbers*sizeof(struct vma_page_parameter));
+	kernel_params.touched_vmas->page_number = 1; //profiling mode (one pafe at a time) - size of page_index-why this is ok?
+	kernel_params.touched_vmas->page_index = malloc(kernel_params.touched_vmas->page_number*sizeof(int));//if is profiling mode, size is one
+	kernel_params.touched_vmas->operation = operation;
+	kernel_params.touched_vmas[0].total_pages = 0;// for checking vma scan part
         
-	do //this part is for covering each vma from vma_index  
+	set_realtime(1, PARENT_CPU); // for parent
+
+	int count_vma = 0;
+       
+	do //this part is for covering each vma from touched_vmas  
 	{
-	   count = 0;
+	  printf("!!!!!!!!!!!!!!!!!!!!!!!! kernel_params.touched_vmas->page_number: %d\n", kernel_params.touched_vmas->page_number);
+	        count = 0; // counting pages in one VMA
 	
-	  do //this part is for coverin "all pages" of one region
-	    {
-		samples = 0;
-		printf("sample_size: %d\n",sample_size);
-		*(kernel_params.buff) = count; //because is profiling, one page at a time kernel_params.buff[0]
-	       
-		for (int j = 0; j < sample_size; j++)
+		do //this part is for covering "all pages" of one region
 		{
+			samples = 0; //sum of cycles for each page index after sample_size time
+		       
+			kernel_params.touched_vmas[0].page_index[0] = count; //because is profiling, one page at a time 
+		      
+			for (int j = 0; j < sample_size; j++)
+			{
 			
-			// The symbol was resolved correctly. Let's run the process
-			// and do the tracing 
+				// The symbol was resolved correctly. Let's run the process
+				// and do the tracing 
+				tparams.pid = run_debuggee(argv[tracee_cmd_idx], &argv[tracee_cmd_idx]);
+				if (tparams.pid == 0) {
+					return EXIT_FAILURE;
+				}
+	
+				// The tracee has been started and it is being traced. Now
+				//install handler for signals coming from the child. 
+				handle_tracee_signals();
+				     
+			}
+			     
+
+			if (count_vma == 0 && count == 0) //first round of execution (first vma and first page of that vma)
+				profiled_vmas = malloc(3*sizeof(struct profiler_output));
+			if(count == 0) //first page of the VMA we are in
+				profiled_vmas[count_vma].page = malloc(kernel_params.touched_vmas[count_vma].total_pages*sizeof(struct profiled_vma_page));
+
+			profiled_vmas[count_vma].page[count].cycles = samples/sample_size; 
+			profiled_vmas[count_vma].page[count].page_index = count; //(Don't laugh at me Renato if you are seeing this comment): . and not -> altho page is pointer to struct. bc page[i] is content, is not pointer
+			//printf("vma # %d, page[%d].cycles = %lu, page[%d].page_number = %d\n",kernel_params.touched_vmas[count_vma].vma_index,count,page[count].cycles,count,page[count].page_number);
+	
+			printf("count: %d , kernel_params.touched_vmas[%d].total_pages: %d\n", count,count_vma,kernel_params.touched_vmas[0].total_pages);
+       		        count++; //to the other page
+	      	}
+	        while(count < kernel_params.touched_vmas[0].total_pages);
+		// end of one VMA 
+		profiled_vmas[count_vma].vma_index = kernel_params.touched_vmas[0].vma_index;
+
+
+		qsort(profiled_vmas[count_vma].page,kernel_params.touched_vmas[0].total_pages,sizeof(struct profiled_vma_page),cmpfunc);
+
+		for (int i = 0; i < temp[count_vma].total_pages; i++){
+		  //if (count_vma == 3 ){
+		  printf("after sort: VMA # %d, page: %d cycles: %lu\n",profiled_vmas[count_vma].vma_index,profiled_vmas[count_vma].page[i].page_index, profiled_vmas[count_vma].page[i].cycles);
+		  //printf("after sort: VMA # %d, page: %d cycles: %lu\n",profiled_vmas[3].vma_index,profiled_vmas[2].page[i].page_index, profiled_vmas[2].page[i].cycles);
+		  //printf("after sort: VMA # %d, page: %d, cycles: %lu\n",profiled_vmas[count_vma].vma_index,profiled_vmas[count_vma].page[i].page_index,profiled_vmas[count_vma].page[i].cycles);
+		    
+		  //	  }
+	}
+		//now page is a sorted array (increasing based on cycles)
+		//printf(" sizeof(kernel_params.touched_vmas)/sizeof(kernel_params.touched_vmas[0]):%d\n", sizeof(kernel_params.touched_vmas));
+		count_vma++; // to the next VMA that should be touched
+		kernel_params.touched_vmas[0].total_pages = temp[count_vma].total_pages;
+		printf("between fors: kernel_params.touched_vmas[0].total_pages:%d\n", kernel_params.touched_vmas[0].total_pages);
+		kernel_params.touched_vmas[0].vma_index = temp[count_vma].vma_index;
+   
+        }while(count_vma < sizeof(temp)-1);//sizeof(temp/*kernel_params.touched_vmas)*/));
+
+	printf("sorted profiled_vmas[1].page[1].cycles:%lu\n",profiled_vmas[1].page[1].cycles);
+	printf("sizeof(temp):%d\n",sizeof(temp));
+	for (int i = 0; i < sizeof(temp); i++){
+		for (int j = 0; j < temp[i].total_pages/*kernel_params.touched_vmas[i].total_pages*/; j++)
+                  printf("VMA # %d, page[%d]: %d cycles: %lu\n",profiled_vmas[i].vma_index,j,profiled_vmas[i].page[j].page_index,profiled_vmas[i].page[j].cycles);
+		//fprintf(fprof,"%d,%lu\n",page[i].page_number, page[i].cycles);
+	}
+	      
+	//fclose(fprof);
+       
+
+	/******************************* SECOND MODE : one vma at a time with multiple pages**************************************/	
+
+	count_vma = 0;
+	
+	do //for each VMA
+	{
+
+		kernel_params.touched_vmas[0].total_pages = temp[count_vma].total_pages;
+		//printf("kernel_params.touched_vmas[0].total_pages:%d\n",kernel_params.touched_vmas[0].total_pages);
+		kernel_params.touched_vmas[0].vma_index = temp[count_vma].vma_index;
+		profiled_vmas[count_vma].output = malloc(kernel_params.touched_vmas[0].total_pages*sizeof(long));
+	      
+		kernel_params.touched_vmas[0].operation = 0; //bc we want to have all pages noncacheable except those in profiling info
+		
+		for (int i = 1; i <= kernel_params.touched_vmas[0].total_pages; i++) //i is number of pages
+		{
+			samples = 0;
+			sample_size = 1; //for now
+			//filling kernel parameters (page index and number of pages before interacting with kernel)
+			kernel_params.touched_vmas[0].page_number = i;
+			kernel_params.touched_vmas[0].page_index = malloc(kernel_params.touched_vmas[0].page_number*sizeof(int));
+
+			  for (int z = 0; z < kernel_params.touched_vmas[0].total_pages; z++)
+			  {
+			    printf("profiled_vmas[%d].page_index[%d]:%d and cycles:%lu\n",count_vma,z,profiled_vmas[count_vma].page[z].page_index,profiled_vmas[count_vma].page[z].cycles);
+			  }
+	    
+			//this part for now just makes sense for nonc mode.when all other problems are fixed I will complete the design of this part
+			for(int j = 0; j <  i; j++)
+			{
+				kernel_params.touched_vmas[0].page_index[j] = profiled_vmas[count_vma].page[j].page_index;//read this from output of profiling mode (struct oage)
+				//this way works if c = 0 (non-c)
+				//for cacheable (c=1) kernel_params.buff[i] = page[heap_size-1-i].page_number
+		
+				}
+			for (int z = 0; z < i; z++)
+			  {
+			    printf("kernel_params.touched_vmas[0].page_index[%d]:%d\n",z,kernel_params.touched_vmas[0].page_index[z]);
+			  }
+
+			//The symbol was resolved correctly. Let's run the process                                                                                   
+			//run benchmark with multiple pages and getting one timing
 			tparams.pid = run_debuggee(argv[tracee_cmd_idx], &argv[tracee_cmd_idx]);
+
 			if (tparams.pid == 0) {
 				return EXIT_FAILURE;
 			}
-	
-			// The tracee has been started and it is being traced. Now
+	   
+			//The tracee has been started and it is being traced. Now                                                                                    
 			//install handler for signals coming from the child. 
 			handle_tracee_signals();
-				     
+
+			//outputting
+			//DBG_PRINT("number of pages are cacheable: %d, cycles: %d\n", i, samples/sample_size);
+			profiled_vmas[count_vma].output[i] = samples/sample_size;
+			//	fprintf(fptr,"%d,%d\n",i,output[i]);
+		
+	    
 		}
-			     
-		if (count == 0) //first round of execution, I think for page = 0
-		  page = malloc(kernel_params.vma_param[count_vma].page_size*sizeof(struct page_stats));//as many pages as in this VMA
-		page[count].cycles = samples/sample_size; 
-		page[count].page_number = count; //(Don't laugh at me Renato if you are seeing this comment): . and not -> altho page is pointer to struct. bc page[i] is content, is not pointer
-		printf("vma # %d, page[%d].cycles = %lu, page[%d].page_number = %d\n",kernel_params.vma_param[count_vma].vma_index,count,page[count].cycles,count,page[count].page_number);
-		count++;
-	
-		//  printf("heap_size is:%d   count is :%d\n",heap_size,count);
-	}
-	while(count < kernel_params.vma_param[count_vma].page_size);
-	  // end of one VMA 
-       
-        qsort(page,kernel_params.vma_param[count_vma].page_size,sizeof(struct page_stats),cmpfunc);
-	for (int i = 0; i < kernel_params.vma_param[count_vma].page_size; i++){
-	  printf("cycle: %lu and page number: %d\n", page[i].cycles, page[i].page_number);
-	  //fprintf(fprof,"%d,%lu\n",page[i].page_number, page[i].cycles);
-	}
-	free(page);
-	//fclose(fprof);
-	//could be  *(kernel_params.vma_param.vma_index) = temp[count_vma+1]; ????
-	//kernel_params.vma_param[0].vma_index = temp[count_vma+1];
-	count_vma++;
-	}
-        while(count_vma < kernel_params.size[VMA_LIST]);
-
-       
+		//end of one VMA
+		//fclose(fptr);
+		//free(kernel_params.touched_vmas[count_vma].page_index);*/
+		count_vma++;
+	} while(count_vma < sizeof(temp)-1);
 
 
-
-	/******************************* SECOND MODE **************************************/
-
-	//SECOND PART IS RUNNING ONCE BUT WITH MULTOPLE PAGES
-
-	//printf("page[8].cycles = %d and page[8].page_number = %d\n", page[8].cycles,page[8].page_number);
-
-	/*qsort(page,kernel_params.vma_param.page_size[0],sizeof(struct page_stats),cmpfunc); //page is sorted array after this, increasingly based on cycles
-	// for cacheable mode we want max cycles (end of array, max cycles) and vice versa for noncacheable mode
-	for (int i = 0; i < kernel_params.vma_param.page_size[0]; i++){                printf("cycle: %d and page number: %d\n", page[i].cycles, page[i].page_number);                                                                                           
-                fprintf(fprof,"%d,%d\n",page[i].page_number, page[i].cycles);                                                                                                             
-                }
-		printf("cycle: %d and page number: %d\n", page[i].cycles, page[i].page_number);
-	        fprintf(fprof,"%d,%d\n",page[i].page_number, page[i].cycles);
+	/*	for (int i = 0; i < sizeof(profiled_vmas)-1; i++){//bc of cmnting stack and places I used sizeof(temp)-1
+		for (int j = 0; j < kernel_params.touched_vmas[i].total_pages; j++)
+			DBG_PRINT("VMA %d, output[%d]:%lu\n",profiled_vmas[i].vma_index,j,profiled_vmas[i].output[j]);
+		//fprintf(fprof,"%d,%lu\n",page[i].page_number, page[i].cycles);
 		}*/
-
-	//fclose(fprof);
-	
-	/*        int output[heap_size];
-	free(kernel_params.buff); //probably should change its place
-	kernel_params.shouldSkip = 0; //bc we want to have all pages noncacheable except those in profiling info
-	for (int i = 1; i <= heap_size; i++) //i is number of pages
-	  {
-	    samples = 0;
-	    sample_size = 1; //for now
-	    
-	    kernel_params.size[0] = i; not size[0] but size[1]
-	    kernel_params.buff = malloc(kernel_params.size[0]*sizeof(long)); size[1]
-	    
-	    //this parts for now just makes sense for nonc mode.when all other problems are fixed I will complete the design of this part
-	        for(int j = 0; j <  i; j++)
-	      {
-		kernel_params.buff[j] = page[j].page_number;//read this from output of profiling mode
-		//this way works if c = 0 (non-c)
-		//for cacheable (c=1) kernel_params.buff[i] = page[heap_size-1-i].page_number
-		//printf("kernel_params.buff[%d] = %lu\n", i, kernel_params.buff[i]);
-	      }
-
-		for (int i = 0; i < i; i++)
-		  {
-		    DBG_PRINT("kernel_parames.buff[%d] : %lu\n", i, kernel_params.buff[i]);
-		  }
-	     //The symbol was resolved correctly. Let's run the process                                                                                   
-	     //run benchmark with multiple pages and getting one timing
-	     tparams.pid = run_debuggee(argv[tracee_cmd_idx], &argv[tracee_cmd_idx]);
-
-	     if (tparams.pid == 0) {
-		return EXIT_FAILURE;
-	      }
-	   
-	     //The tracee has been started and it is being traced. Now                                                                                    
-	     //install handler for signals coming from the child. 
-	     handle_tracee_signals();
-
-	     //outputting
-	     //DBG_PRINT("number of pages are cacheable: %d, cycles: %d\n", i, samples/sample_size);
-	     output[i] = samples/sample_size;
-	     fprintf(fptr,"%d,%d\n",i,output[i]);
-	     free(kernel_params.buff);
-	   
-	    
-	     }
-	     fclose(fptr);*/
-	/*for (int i = 1; i <= heap_size; i++)
-	  {
-	    DBG_PRINT("%d , %d\n",i, output[i]);
-	    }*/
+       
 	return EXIT_SUCCESS;
-	  }	
+}	
 
