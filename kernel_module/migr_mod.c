@@ -622,10 +622,11 @@ int init_module( void )
 		pr_err("Unable to locate target task.\n");
 	} else {
 		pr_info("Target task located!\n");
-#define TEST_HEAP
+#define TEST_TEXT
 #ifdef TEST_TEXT
 		test_process_page(target, 0, 0);
-		ret = migrate_to_pool(target, 0, 0, 0x41);
+		//ret = migrate_to_pool(target, 0, 0, 0x41);
+		ret = migrate_to_pool(target, 0, 0x20, 0x3b);
 		pr_info("Page migration returned: %d\n", ret);
 		test_process_page(target, 0, 0);
 #endif
