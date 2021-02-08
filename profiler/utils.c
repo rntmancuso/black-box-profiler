@@ -159,7 +159,7 @@ int cmpfunc (const void * a, const void * b) {
 static long get_LR (pid_t pid)
 {
 	/* User registers for ARM (check sys/usr.h header) */
-#ifdef __aarch64__
+#ifdef __arm__
 	struct user_regs regs;
 	if (ptrace(PTRACE_GETREGS, pid, NULL, &regs) < 0) {
 		DBG_PRINT("Unable to retrieve tracee registers.");
@@ -178,7 +178,7 @@ static long get_LR (pid_t pid)
  * failure, 0 on success. */
 static long set_PC (pid_t pid, void * addr)
 {
-#ifdef __aarch64__
+#ifdef __arm__
 	struct user_regs regs;
 	memset(&regs, 0, sizeof(regs));
 	/* Get registers of the child */
