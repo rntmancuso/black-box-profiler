@@ -168,6 +168,7 @@ static long get_LR (pid_t pid)
 	/* LR is register 14 */
 	long lr = regs.uregs[14];
 #else
+	#warning No get_LR routine implemented on this architecture!
 	long lr = 0;
 #endif
 	(void)pid;
@@ -193,9 +194,11 @@ static long set_PC (pid_t pid, void * addr)
 		return -1;
 	}
 	DBG_PRINT("Done setting the program counter\n\n");
-#endif
+#else
+#warning No set_PC routine implemented on this architecture!
 	(void)pid;
 	(void)addr;
+#endif
 	return 0;
 }
 

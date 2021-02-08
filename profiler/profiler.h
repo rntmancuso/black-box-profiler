@@ -154,6 +154,10 @@ enum tracee_stage {
 #elif defined(__aarch64__)
 #define get_timing(cycles) {}
 #else
+#ifndef __GET_TIMING_WARNED
+#warning No get_timing routine implemented on this architecture!
 #define get_timing(cycles) {}
+#define __GET_TIMING_WARNED
+#endif
 #endif
 
