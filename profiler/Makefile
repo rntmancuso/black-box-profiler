@@ -1,4 +1,4 @@
-CC=aarch64-linux-gnu-gcc
+CC=${CROSS_COMPILE}gcc
 CFLAGS=-I. -W -Wall -I./libs/include/
 LDFLAGS=-lelf -L./libs/lib/ -lz
 DEPS = profiler.h vmas.h utils.h
