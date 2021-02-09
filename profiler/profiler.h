@@ -152,7 +152,11 @@ enum tracee_stage {
 			     : "=r" (cycles));			\
 	} while (0)
 #elif defined(__aarch64__)
-#define get_timing(cycles) {}
+#define get_timing(cycles)				\
+	do {						\
+		asm volatile("mrs %0, cntvct_el0"	\
+			     : "=r"(cycles));		\
+	} while (0)
 #else
 #ifndef __GET_TIMING_WARNED
 #warning No get_timing routine implemented on this architecture!
