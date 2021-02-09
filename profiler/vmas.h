@@ -13,6 +13,11 @@
 #ifndef __PROFILER_VMAS_H__
 #define __PROFILER_VMAS_H__
 
+#ifdef __aarch64__
+#define PAGE_SHIFT 12
+#define PAGE_SIZE (1 << PAGE_SHIFT)
+#endif
+
 /* Add a VMA in the layout of the application under analysis, starting
  * from a vma descriptor extraced by the vma finder */
 void add_vma_descr(struct vma_descr *vma, struct vma_descr ** vmas,
