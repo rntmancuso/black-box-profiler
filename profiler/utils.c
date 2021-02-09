@@ -11,7 +11,7 @@
  **********************************************************************/
 
 ///
-#define _GNU_SOURCE 
+#define _GNU_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +34,8 @@
 #include <sched.h>
 #include <errno.h>
 
+#include <asm/ptrace.h>
+
 #include "profiler.h"
 #include "utils.h"
 
@@ -44,22 +46,27 @@ void collect_profiling(struct profiler_output ** output, unsigned int * profile_
 		       struct trace_params * tparam,
 		       unsigned int vma_idx, unsigned int page_idx)
 {
-	if (*output == NULL) {
+	int new_vma = 0;
+	if ((*output) == NULL) {
 		*output = (struct profiler_output *)malloc(
 			sizeof(struct profiler_output));
 		*profile_len = 1;
+		new_vma = 1;
 	} else {
 		if (vma_idx >= *profile_len) {
-			struct profiler_output * new_entry;
 			*profile_len += 1;
 			*output = (struct profiler_output *)realloc(*output,
 			       (*profile_len) * sizeof(struct profiler_output));
-
-			new_entry = &(*output)[(*profile_len)-1];
-			new_entry->vma_index = vma_idx;
-			new_entry->page_count = 0;
-			new_entry->pages = NULL;
+			new_vma = 1;
 		}
+	}
+
+	if (new_vma) {
+		struct profiler_output * new_entry;
+		new_entry = &(*output)[(*profile_len)-1];
+		new_entry->vma_index = vma_idx;
+		new_entry->page_count = 0;
+		new_entry->pages = NULL;
 	}
 
 	/* Add the stats for the new page */
@@ -167,6 +174,18 @@ static long get_LR (pid_t pid)
 	}
 	/* LR is register 14 */
 	long lr = regs.uregs[14];
+#elif __aarch64__
+	struct user_regs_struct gregs;
+	struct iovec iovec;
+	iovec.iov_base = &gregs;
+	iovec.iov_len = sizeof (gregs);
+
+	if (ptrace(PTRACE_GETREGSET, pid, NT_PRSTATUS, &iovec) < 0) {
+		DBG_PRINT("Unable to retrieve tracee registers.");
+		return -1;
+	}
+	/* LR is register 30 */
+	long lr = gregs.regs[30];
 #else
 	#warning No get_LR routine implemented on this architecture!
 	long lr = 0;
@@ -194,6 +213,23 @@ static long set_PC (pid_t pid, void * addr)
 		return -1;
 	}
 	DBG_PRINT("Done setting the program counter\n\n");
+#elif __aarch64__
+	struct user_regs_struct gregs;
+	struct iovec iovec;
+	iovec.iov_base = &gregs;
+	iovec.iov_len = sizeof (gregs);
+
+	if (ptrace(PTRACE_GETREGSET, pid, NT_PRSTATUS, &iovec) < 0) {
+		DBG_PRINT("Unable to retrieve tracee registers.");
+		return -1;
+	}
+	gregs.pc = (unsigned long)addr;
+	if (ptrace(PTRACE_SETREGSET, pid, NT_PRSTATUS, &iovec) < 0) {
+		DBG_PRINT("Unable to set tracee PC register.");
+		return -1;
+	}
+	DBG_PRINT("Done setting the program counter\n\n");
+
 #else
 #warning No set_PC routine implemented on this architecture!
 	(void)pid;
