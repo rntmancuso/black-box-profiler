@@ -41,6 +41,7 @@
 void send_profile_to_kernel(struct profile_params * params)
 {
 	(void)params;
+	DBG_PRINT("Sending profile...\n");
 }
 
 /* Perform page-by-page timing analysis of the target
@@ -94,7 +95,7 @@ void do_profiling(struct trace_params * tparams,
 			if (!skip_first)
 				res = run_to_symbol(tparams);
 			else
-				skip_first = 1;
+				skip_first = 0;
 
 			/* Perform interact with the kernel */
 			send_profile_to_kernel(params);
