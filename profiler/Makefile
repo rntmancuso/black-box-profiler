@@ -1,6 +1,6 @@
-CC=gcc
-CFLAGS=-I. -W -Wall
-LDFLAGS=-lelf
+CC=aarch64-linux-gnu-gcc
+CFLAGS=-I. -W -Wall -I./libs/include/
+LDFLAGS=-lelf -L./libs/lib/ -lz
 DEPS = profiler.h vmas.h utils.h
 OBJ = vmas.o utils.o profiler.o
 TARGET = profiler
