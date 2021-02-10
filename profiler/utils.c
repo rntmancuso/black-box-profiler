@@ -42,35 +42,35 @@
 /* Collect profiling information after a single round of profiling,
  * i.e. after timing the effect of manipulating the cacheability of a
  * single page. */
-void collect_profiling(struct profiler_output ** output, unsigned int * profile_len,
-		       struct trace_params * tparam, struct vma_descr * vma,
+void collect_profiling(struct profile * profile, struct trace_params * tparam,
+		       struct vma_descr * vma,
 		       unsigned int vma_idx, unsigned int page_idx)
 {
 	int new_vma = 0;
-	if ((*output) == NULL) {
-		*output = (struct profiler_output *)malloc(
-			sizeof(struct profiler_output));
-		*profile_len = 1;
+	if (profile->vmas == NULL) {
+		profile->vmas = (struct profiled_vma *)malloc(
+			sizeof(struct profiled_vma));
+		profile->profile_len = 1;
 		new_vma = 1;
 	} else {
-		if (vma_idx >= *profile_len) {
-			*profile_len += 1;
-			*output = (struct profiler_output *)realloc(*output,
-			       (*profile_len) * sizeof(struct profiler_output));
+		if (vma_idx >= profile->profile_len) {
+			profile->profile_len += 1;
+			profile->vmas = (struct profiled_vma *)realloc(profile->vmas,
+			       (profile->profile_len) * sizeof(struct profiled_vma));
 			new_vma = 1;
 		}
 	}
 
 	if (new_vma) {
-		struct profiler_output * new_entry;
-		new_entry = &(*output)[(*profile_len)-1];
+		struct profiled_vma * new_entry;
+		new_entry = &profile->vmas[profile->profile_len-1];
 		new_entry->vma_index = vma->vma_index;
 		new_entry->page_count = 0;
 		new_entry->pages = NULL;
 	}
 
 	/* Add the stats for the new page */
-	struct profiler_output * cur_entry = &(*output)[vma_idx];
+	struct profiled_vma * cur_entry = &profile->vmas[vma_idx];
 	if (cur_entry->pages == NULL) {
 		cur_entry->page_count = 1;
 		cur_entry->pages = (struct profiled_vma_page *)malloc(
@@ -84,6 +84,24 @@ void collect_profiling(struct profiler_output ** output, unsigned int * profile_
 	struct profiled_vma_page * page = &cur_entry->pages[cur_entry->page_count-1];
 	page->page_index = page_idx;
 	page->cycles = tparam->t_end - tparam->t_start;
+}
+
+/* Deallocates a profile structure */
+void free_profile(struct profile * profile)
+{
+	unsigned int i;
+	if (!profile)
+		return;
+
+	for (i = 0; i < profile->profile_len; ++i) {
+		struct profiled_vma * cur_entry = &profile->vmas[i];
+		if (cur_entry->pages) {
+			free(cur_entry->pages);
+			cur_entry->pages = NULL;
+		}
+	}
+
+	free(profile->vmas);
 }
 
 /* This function sets the VMA and page index for the current profiling
@@ -105,17 +123,18 @@ void set_profiling_page(struct profile_params * params,
 }
 
 /* Prints a nicely formatted view of the current profile */
-void print_profile(struct profiler_output * profile, unsigned int profile_len)
+void print_profile(struct profile * profile)
 {
 	unsigned int i, j;
+	unsigned int len = profile->profile_len;
 	        DBG_INFO("\n----------------- PROFILE -----------------\n");
-	for (i = 0; i < profile_len; ++i) {
-		struct profiler_output cur_vma = profile[i];
+	for (i = 0; i < len; ++i) {
+		struct profiled_vma cur_vma = profile->vmas[i];
 		DBG_INFO("========== (%d/%d) VMA index: %d ==========\n",
-			                     i, profile_len, cur_vma.vma_index);
+			                     i, len, cur_vma.vma_index);
 
 		for (j = 0; j < cur_vma.page_count; ++j) {
-			struct profiled_vma_page cur_page = profile[i].pages[j];
+			struct profiled_vma_page cur_page = cur_vma.pages[j];
 			DBG_INFO("PAGE: %d\t\tCYCLES: %ld\n",
 				          cur_page.page_index, cur_page.cycles);
 		}

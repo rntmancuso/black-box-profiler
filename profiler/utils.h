@@ -16,9 +16,12 @@
 /* Collect profiling information after a single round of profiling,
  * i.e. after timing the effect of manipulating the cacheability of a
  * single page. */
-void collect_profiling(struct profiler_output ** output, unsigned int * profile_len,
-		       struct trace_params * tparam, struct vma_descr * vma,
+void collect_profiling(struct profile * profile, struct trace_params * tparam,
+		       struct vma_descr * vma,
 		       unsigned int vma_idx, unsigned int page_idx);
+
+/* This function recursively deallocates a profile structure */
+void free_profile(struct profile * profile);
 
 /* This function sets the VMA and page index for the current profiling
  * operation. When profiling, we know that the profile_params
@@ -28,7 +31,7 @@ void set_profiling_page(struct profile_params * params,
 			struct vma_descr * vma, int page_index);
 
 /* Prints a nicely formatted view of the current profile */
-void print_profile(struct profiler_output * profile, unsigned int profile_len);
+void print_profile(struct profile * profile);
 
 /* Allocate a new set of profile parameters */
 struct profile_params * alloc_params(void);

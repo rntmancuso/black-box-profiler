@@ -51,8 +51,7 @@ void send_profile_to_kernel(struct profile_params * params)
  * application. Per-page timing results are accumulated in the @output
  * array. */
 void do_profiling(struct trace_params * tparams,
-		  struct profiler_output ** output,
-		  unsigned int * profile_len)
+		  struct profile * profile)
 {
 	struct profile_params * params = alloc_params();
 	struct vma_descr * vma_targets = NULL;
@@ -82,6 +81,9 @@ void do_profiling(struct trace_params * tparams,
 	params->vma_count = 1;
 	add_vma_descr(&vma_targets[0], &params->vmas, &params->vma_count);
 
+	/* Make sure we start with a clean profile */
+	memset(profile, 0, sizeof(struct profile));
+
 	/* Okay, we have the VMAs to work with. Let's loop over each
 	 * VMA and each page to profile the behavior of the task when
 	 * the cacheability of each page is modified. */
@@ -108,11 +110,11 @@ void do_profiling(struct trace_params * tparams,
 
 			/* All done for this page, save the collected
 			 * timing info. */
-			collect_profiling(output, profile_len, tparams, cur_vma, i, j);
+			collect_profiling(profile, tparams, cur_vma, i, j);
 		}
 
 		/* Sort the profile of the current VMA */
-		qsort((*output)[i].pages, (*output)[i].page_count,
+		qsort(profile->vmas[i].pages, profile->vmas[i].page_count,
 		      sizeof(struct profiled_vma_page), profiled_vma_page_cmp);
 	}
 
@@ -123,8 +125,7 @@ int main(int argc, char* argv[])
 {
 	int opt, i, tracee_cmd_idx, sample_size;
 	struct trace_params tparams;
-	struct profiler_output * profile = NULL;
-	unsigned int profile_len = 0;
+	struct profile profile;
 	unsigned int operation;
 
 	/* Parse command line parameters. Just as an example, this
@@ -216,10 +217,13 @@ int main(int argc, char* argv[])
 	set_realtime(1, PARENT_CPU);
 
 	/* First mode, perform layout scan and per-page profiling */
-	do_profiling(&tparams, &profile, &profile_len);
+	do_profiling(&tparams, &profile);
 
 	/* Output a pretty print of the profile. */
-	print_profile(profile, profile_len);
+	print_profile(&profile);
+
+
+	//get_incremental_profile(profile, profile_len, );
 
 	return EXIT_SUCCESS;
 }
