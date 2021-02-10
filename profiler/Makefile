@@ -1,5 +1,5 @@
 CC=${CROSS_COMPILE}gcc
-CFLAGS=-I. -W -Wall -I./libs/include/
+CFLAGS=-I. -W -Wall -I./libs/include/ -D_VERBOSE_
 LDFLAGS=-lelf -L./libs/lib/ -lz
 DEPS = profiler.h vmas.h utils.h
 OBJ = vmas.o utils.o profiler.o

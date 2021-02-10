@@ -18,8 +18,29 @@
 
 /* Helper macro to prefix any print statement produced by the host
  * process. */
+#ifdef _VERBOSE_
+extern int __verbose_output;
+#define DBG_PRINT(format, ...)						\
+	do {								\
+		if (__verbose_output)					\
+			fprintf(stderr, "[DBG] " format, ##__VA_ARGS__); \
+	} while (0)
+#else
 #define DBG_PRINT(format, ...)				\
+	{}
+#endif
+
+#define DBG_INFO(format, ...)				\
 	fprintf(stderr, "[DBG] " format, ##__VA_ARGS__)
+
+#define DBG_FATAL(format, ...)				\
+	fprintf(stderr, "[DBG] FATAL: " format, ##__VA_ARGS__)
+
+#define DBG_ABORT(format, ...)				\
+	do {						\
+		DBG_FATAL(format, ##__VA_ARGS__);	\
+		exit(EXIT_FAILURE);			\
+	} while(0)
 
 #define DBG_PRINT_NOPREF(format, ...)		\
 	fprintf(stderr, format, ##__VA_ARGS__)

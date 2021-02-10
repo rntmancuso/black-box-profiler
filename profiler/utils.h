@@ -17,7 +17,7 @@
  * i.e. after timing the effect of manipulating the cacheability of a
  * single page. */
 void collect_profiling(struct profiler_output ** output, unsigned int * profile_len,
-		       struct trace_params * tparam,
+		       struct trace_params * tparam, struct vma_descr * vma,
 		       unsigned int vma_idx, unsigned int page_idx);
 
 /* This function sets the VMA and page index for the current profiling
@@ -27,8 +27,15 @@ void collect_profiling(struct profiler_output ** output, unsigned int * profile_
 void set_profiling_page(struct profile_params * params,
 			struct vma_descr * vma, int page_index);
 
+/* Prints a nicely formatted view of the current profile */
+void print_profile(struct profiler_output * profile, unsigned int profile_len);
+
 /* Allocate a new set of profile parameters */
 struct profile_params * alloc_params(void);
+
+/* Compares two structs of type profiled_vma_page based on the
+ * collected cycles measurements. */
+int profiled_vma_page_cmp (const void * a, const void * b);
 
 /* Set real-time SCHED_FIFO scheduler with given priority */
 void set_realtime(int prio, int cpu);

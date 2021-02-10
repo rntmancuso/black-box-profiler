@@ -37,6 +37,9 @@
 #include "utils.h"
 #include "vmas.h"
 
+/* Global variables */
+int __verbose_output = 0;
+
 /* TODO: implement this. */
 void send_profile_to_kernel(struct profile_params * params)
 {
@@ -69,8 +72,7 @@ void do_profiling(struct trace_params * tparams,
 	res = select_vmas(tparams, &vma_targets, &vma_count);
 
 	if (res) {
-		DBG_PRINT("VMA selection failed. Exiting.\n");
-		exit(EXIT_FAILURE);
+		DBG_ABORT("VMA selection failed. Exiting.\n");
 	}
 
 	/* Setup the parameters that we will pass to the kernel */
@@ -106,9 +108,14 @@ void do_profiling(struct trace_params * tparams,
 
 			/* All done for this page, save the collected
 			 * timing info. */
-			collect_profiling(output, profile_len, tparams, i, j);
+			collect_profiling(output, profile_len, tparams, cur_vma, i, j);
 		}
+
+		/* Sort the profile of the current VMA */
+		qsort((*output)[i].pages, (*output)[i].page_count,
+		      sizeof(struct profiled_vma_page), profiled_vma_page_cmp);
 	}
+
 
 }
 
@@ -128,7 +135,7 @@ int main(int argc, char* argv[])
 	 * end of the command line after all the optional
 	 * arguments. */
 
-	while((opt = getopt(argc, argv, ":s:c:n:m:h")) != -1) {
+	while((opt = getopt(argc, argv, ":s:c:n:m:hv")) != -1) {
 		switch (opt) {
 		case 'h':
 			DBG_PRINT(HELP_STRING, argv[0]);
@@ -145,6 +152,9 @@ int main(int argc, char* argv[])
 			else
 				printf("wrong mode input\n");
 				break;*/
+		case 'v':
+			__verbose_output = 1;
+			break;
 		case 'n': //number of samples
 			sample_size = strtol(optarg, NULL, 0);
 			break;
@@ -158,23 +168,20 @@ int main(int argc, char* argv[])
 			break;
 			//case 'o':
 		case '?':
-			//DBG_PRINT("Invalid parameter. Exiting.\n");
-			return EXIT_FAILURE;
+			DBG_ABORT("Invalid parameter. Exiting.\n");
 		}
 	}
 
 	/* Check that the symbol to observe has been specified */
 	if (!tparams.symbol) {
-		DBG_PRINT("No symbol/function to observe has been"
+		DBG_ABORT("No symbol/function to observe has been"
 			  " specified with the -s parameter. Exiting.\n");
-		return EXIT_FAILURE;
 	}
 
 	/* Check that there is a non-empty command to launch the
 	 * tracee after the optional parameters */
 	if (optind >= argc) {
-	  	DBG_PRINT("Expected command to run after parameters. Exiting.\n");
-		return EXIT_FAILURE;
+	  	DBG_ABORT("Expected command to run after parameters. Exiting.\n");
 	}
 
 	/* Keep track that the command line for the tracee starts at
@@ -210,6 +217,9 @@ int main(int argc, char* argv[])
 
 	/* First mode, perform layout scan and per-page profiling */
 	do_profiling(&tparams, &profile, &profile_len);
+
+	/* Output a pretty print of the profile. */
+	print_profile(profile, profile_len);
 
 	return EXIT_SUCCESS;
 }

@@ -105,7 +105,6 @@ static void vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
 	else if  (vma->executable && get_text)
 	{
 		get_text = 0;
-		printf("Text and its index is : %d\n", vma->chunk_id);
 		add_vma(vma, vmas, vma_count);
 	}
 
@@ -129,14 +128,12 @@ static struct vma_struct * scan_proc_maps_line(int chunk_id, char const *buf)
 
 	mappedfile[max_vma_mappedfile-1] = '\0';
 	if (rc < 6) {
-		DBG_PRINT("Invalid line in maps file.\n");
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Invalid line in maps file.\n");
 	}
 
 	vma = (struct vma_struct *)malloc(sizeof(struct vma_struct));
 	if (!vma) {
-		DBG_PRINT("Memory allocation error.\n");
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Memory allocation error.\n");
 	}
 
 	vma->chunk_id = chunk_id;
@@ -193,8 +190,7 @@ static void read_proc_maps_file(pid_t pid, struct vma_descr ** vmas,
 
 	FILE *f = fopen(path, "r");
 	if (f == NULL) {
-		DBG_PRINT("Unable to open file %s", path);
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Unable to open file %s", path);
 	}
 
 	/* This is the beginning of a new scan. Make sure we reset any
@@ -207,8 +203,7 @@ static void read_proc_maps_file(pid_t pid, struct vma_descr ** vmas,
 			if(feof(f))
 				break;
 
-		        DBG_PRINT("Error reading %s maps file.\n", path);
-		        exit(EXIT_FAILURE);
+		        DBG_ABORT("Error reading %s maps file.\n", path);
 		}
 
 		/* Make sure buffer is zero-terminated. */
@@ -237,7 +232,7 @@ int select_vmas(struct trace_params * tparams,
 	res = run_to_symbol(tparams);
 
 	if (res) {
-		DBG_PRINT("Unable to run child until [%s]. Exiting.\n", tparams->symbol);
+		DBG_FATAL("Unable to run child until [%s]. Exiting.\n", tparams->symbol);
 		return -1;
 	}
 
@@ -250,7 +245,7 @@ int select_vmas(struct trace_params * tparams,
 	 * property to speed-up the first profiling iteration. */
 
 	if (*vma_count == 0) {
-		DBG_PRINT("No VMAs were selected for debugging.\n");
+		DBG_FATAL("No VMAs were selected for debugging.\n");
 		return -1;
 	}
 

@@ -43,7 +43,7 @@
  * i.e. after timing the effect of manipulating the cacheability of a
  * single page. */
 void collect_profiling(struct profiler_output ** output, unsigned int * profile_len,
-		       struct trace_params * tparam,
+		       struct trace_params * tparam, struct vma_descr * vma,
 		       unsigned int vma_idx, unsigned int page_idx)
 {
 	int new_vma = 0;
@@ -64,7 +64,7 @@ void collect_profiling(struct profiler_output ** output, unsigned int * profile_
 	if (new_vma) {
 		struct profiler_output * new_entry;
 		new_entry = &(*output)[(*profile_len)-1];
-		new_entry->vma_index = vma_idx;
+		new_entry->vma_index = vma->vma_index;
 		new_entry->page_count = 0;
 		new_entry->pages = NULL;
 	}
@@ -104,15 +104,33 @@ void set_profiling_page(struct profile_params * params,
 	params->vmas[0].page_index[0] = page_index;
 }
 
+/* Prints a nicely formatted view of the current profile */
+void print_profile(struct profiler_output * profile, unsigned int profile_len)
+{
+	unsigned int i, j;
+	        DBG_INFO("\n----------------- PROFILE -----------------\n");
+	for (i = 0; i < profile_len; ++i) {
+		struct profiler_output cur_vma = profile[i];
+		DBG_INFO("========== (%d/%d) VMA index: %d ==========\n",
+			                     i, profile_len, cur_vma.vma_index);
+
+		for (j = 0; j < cur_vma.page_count; ++j) {
+			struct profiled_vma_page cur_page = profile[i].pages[j];
+			DBG_INFO("PAGE: %d\t\tCYCLES: %ld\n",
+				          cur_page.page_index, cur_page.cycles);
+		}
+	}
+	DBG_INFO("\n-------------------------------------------\n");
+
+}
+
 struct profile_params * alloc_params(void)
 {
 	struct profile_params * retval;
 	retval = (struct profile_params *)malloc(sizeof(struct profile_params));
 
-	if (!retval) {
-		DBG_PRINT("Unable to allocate memory. Exiting.\n");
-		exit(EXIT_FAILURE);
-	}
+	if (!retval)
+		DBG_ABORT("Unable to allocate memory. Exiting.\n");
 
 	/* Initialize the other fields */
 	retval->pid = -1;
@@ -133,8 +151,7 @@ void set_realtime(int prio, int cpu)
 
 	/* Attempt to set the scheduler for current process */
 	if (sched_setscheduler(0, SCHED_FIFO, &sp) < 0) {
-		perror("Unable to set SCHED_FIFO scheduler");
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Unable to set SCHED_FIFO scheduler");
 	}
 
 	/* Set CPU affinity if isolate flag specified */
@@ -146,15 +163,14 @@ void set_realtime(int prio, int cpu)
 	CPU_SET(cpu, &set);
 
 	if (sched_setaffinity(getpid(), sizeof(set), &set) == -1) {
-		perror("Unable to set CPU affinity.");
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Unable to set CPU affinity.");
 	}
 
 
 }
 
 /* Compare function for qsort */
-int cmpfunc (const void * a, const void * b) {
+int profiled_vma_page_cmp (const void * a, const void * b) {
 	return (
 	    ((struct profiled_vma_page*)a)->cycles -
 	    ((struct profiled_vma_page*)b)->cycles
@@ -247,14 +263,13 @@ static long set_breakpoint(pid_t pid, void * addr)
 	data = ptrace(PTRACE_PEEKTEXT, pid, addr, 0);
 
 	if (data == -1) {
-		DBG_PRINT("Unable to read data at desired breakpoint address.\n");
-		return -1;
+		DBG_ABORT("Unable to read data at desired breakpoint address.\n");
 	}
 
 	if (ptrace(PTRACE_POKETEXT, pid, (void *)addr, BRKPOINT_INSTR) < 0) {
-		DBG_PRINT("Unable to set breakpoint.\n");
-		return -1;
+		DBG_ABORT("Unable to set breakpoint.\n");
 	}
+
 	DBG_PRINT("Setting a breakpoint at %p (data: 0x%08lx)\n", addr, data);
 
 	/* data is the original instruction at addr (before being
@@ -290,7 +305,7 @@ void * resolve_symbol(char * elf_path, char * symbol_to_search) {
 	fd = open(elf_path, O_RDONLY);
 
 	if (fd < 0) {
-		DBG_PRINT("Unable to open ELF file at %s", elf_path);
+		DBG_FATAL("Unable to open ELF file at %s", elf_path);
 		DBG_PERROR(NULL);
 		return retval;
 	}
@@ -299,7 +314,7 @@ void * resolve_symbol(char * elf_path, char * symbol_to_search) {
 	 * parsing. */
 	elf = elf_begin(fd, ELF_C_READ, NULL);
 	if (!elf) {
-		DBG_PRINT("Unable to parse ELF file at %s\n", elf_path);
+		DBG_FATAL("Unable to parse ELF file at %s\n", elf_path);
 		goto err_close;
 	}
 
@@ -313,7 +328,7 @@ void * resolve_symbol(char * elf_path, char * symbol_to_search) {
 		}
 	}
 	if (!scn) {
-		DBG_PRINT("Unable to find the symbols table.\n");
+		DBG_FATAL("Unable to find the symbols table.\n");
 		goto err_close;
 	}
 
@@ -340,7 +355,7 @@ void * resolve_symbol(char * elf_path, char * symbol_to_search) {
 		}
 	}
 
-	DBG_PRINT("Unable to find symbol [%s]\n", symbol_to_search);
+	DBG_FATAL("Unable to find symbol [%s]\n", symbol_to_search);
 
 err_close:
 	close(fd);
@@ -366,32 +381,26 @@ static pid_t run_debuggee(char * program_name, char * arguments [])
 		/*Allow tracing of this process*/
 		if (ptrace(PTRACE_TRACEME, 0, 0, 0) < 0)
 		{
-			DBG_PRINT("Unable to initate tracing on program %s",
+			DBG_ABORT("Unable to initate tracing on program %s\n",
 				  program_name);
-			DBG_PERROR(NULL);
-			exit(EXIT_FAILURE);
 		}
 
 		int cpu;
 		if ((cpu = sched_getcpu()) < 0)
 		{
-			DBG_PRINT("Unable to detect the current CPU");
-			DBG_PERROR(NULL);
-			exit(EXIT_FAILURE);
+			DBG_ABORT("Unable to detect the current CPU\n");
 		}
+
 		DBG_PRINT("Executing tracee on CPU %d\n", cpu);
 
 		/* Replace this process's image with the given program image
 		   will load a new binary image into memory and start
 		   executing from that image's entry point */
 		if (execv(program_name, arguments) < 0) {
-			DBG_PRINT("Unable to execute program %s", program_name);
-			DBG_PERROR(NULL);
-			exit(EXIT_FAILURE);
+			DBG_ABORT("Unable to execute program %s\n", program_name);
 		}
 
-		DBG_PRINT("How did I get here?\n");
-		exit(EXIT_FAILURE);
+		DBG_ABORT("How did I get here?\n");
 	}
 
 	/* This will be executed by the parent after a successful fork */
@@ -403,9 +412,7 @@ static pid_t run_debuggee(char * program_name, char * arguments [])
 	/* Something wnet wrong with the fork systcall */
 	else
 	{
-		DBG_PRINT("Fork syscall failed");
-	  	DBG_PERROR(NULL);
-		return 0;
+		DBG_ABORT("Fork syscall failed\n");
 	}
 }
 
@@ -420,8 +427,8 @@ static int get_child_wstat (void)
 		return -1;
 	} else if (pid == -1 && errno != ECHILD) {
 		/* Something went wrong */
-		DBG_PRINT("errno is %d\n", errno);
-		DBG_PERROR("Waitpid() exited with error %d");
+		DBG_FATAL("Unexpected waitpid() result.\n");
+		DBG_PERROR(NULL);
 		return -1;
 	} else if (WIFSTOPPED(wstat) || WIFEXITED(wstat)) {
 		return wstat;
@@ -439,8 +446,7 @@ static void continue_until_breakpoint(struct trace_params * tparams)
 		set_breakpoint(tparams->pid, tparams->brkpnt_addr[TRACEE_ENTRY]);
 
 	if(ptrace(PTRACE_CONT, tparams->pid, NULL, NULL) < 0){
-		DBG_PRINT("Unable to resume tracee. Exiting.");
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Unable to resume tracee. Exiting.\n");
 	}
 
 }
@@ -457,14 +463,13 @@ static void continue_until_return(struct trace_params * tparams)
 		  tparams->brkpnt_addr[TRACEE_ENTRY],
 		  tparams->brkpnt_data[TRACEE_ENTRY]) < 0)
 	{
-		DBG_PRINT("Unable to resume from breakpoint. Exiting.");
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Unable to resume from breakpoint. Exiting.\n");
 	}
 
 	/* Rewind the PC of the tracee to before the
 	 * breakpoint */
 	if(set_PC(tparams->pid, tparams->brkpnt_addr[TRACEE_ENTRY]) < 0) {
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Unable to rewind PC.\n");
 	}
 
 	/* Now read return address to set a breakpoint at the
@@ -481,8 +486,7 @@ static void continue_until_return(struct trace_params * tparams)
 	get_timing(tparams->t_start);
 
 	if(ptrace(PTRACE_CONT, tparams->pid, NULL, NULL) < 0) {
-		DBG_PRINT("Unable to resume from breakpoint. Exiting.");
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Unable to resume from breakpoint. Exiting.\n");
 	}
 
 }
@@ -505,19 +509,17 @@ static void continue_until_end(struct trace_params * tparams)
 		  tparams->brkpnt_addr[TRACEE_EXIT],
 		  tparams->brkpnt_data[TRACEE_EXIT]) < 0)
 	{
-		DBG_PRINT("Unable to resume from breakpoint. Exiting.");
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Unable to resume from breakpoint. Exiting.\n");
 	}
 
 	/* Rewind the PC of the tracee to before the
 	 * breakpoint */
 	if(set_PC(tparams->pid, tparams->brkpnt_addr[TRACEE_EXIT]) < 0) {
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Unable to rewind PC.\n");
 	}
 
 	if(ptrace(PTRACE_CONT, tparams->pid, NULL, NULL) < 0) {
-		DBG_PRINT("Unable to resume from breakpoint. Exiting.");
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Unable to resume from breakpoint. Exiting.");
 	}
 }
 
@@ -542,8 +544,7 @@ int run_to_symbol(struct trace_params * tparams)
 	DBG_PRINT("PID %d stopped by signal %d\n", tparams->pid, WSTOPSIG(wstat));
 
 	if(!WIFSTOPPED(wstat)) {
-		DBG_PRINT("Unexpected child status %d. Exiting.\n", wstat);
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Unexpected child status %d. Exiting.\n", wstat);
 	}
 
 	continue_until_breakpoint(tparams);
@@ -556,8 +557,7 @@ int run_to_symbol(struct trace_params * tparams)
 	DBG_PRINT("PID %d stopped by signal %d\n", tparams->pid, WSTOPSIG(wstat));
 
 	if(!WIFSTOPPED(wstat)) {
-		DBG_PRINT("Unexpected child status %d. Exiting.\n", wstat);
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Unexpected child status %d. Exiting.\n", wstat);
 	}
 
 	/* If we have reached this point, the child has reached the
@@ -587,8 +587,7 @@ int run_to_completion(struct trace_params * tparams)
 	DBG_PRINT("PID %d stopped by signal %d\n", tparams->pid, WSTOPSIG(wstat));
 
 	if(!WIFSTOPPED(wstat)) {
-		DBG_PRINT("Unexpected child status %d. Exiting.\n", wstat);
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Unexpected child status %d. Exiting.\n", wstat);
 	}
 
 	continue_until_end(tparams);
@@ -598,8 +597,7 @@ int run_to_completion(struct trace_params * tparams)
 	wstat = get_child_wstat();
 
 	if(!WIFEXITED(wstat)) {
-		DBG_PRINT("Unexpected child status %d. Exiting.\n", wstat);
-		exit(EXIT_FAILURE);
+		DBG_ABORT("Unexpected child status %d. Exiting.\n", wstat);
 	}
 
 	DBG_PRINT("PID %d exited.\n", tparams->pid);
