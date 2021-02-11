@@ -42,12 +42,20 @@ int __verbose_output = 0;
 int __no_kernel = 0;
 
 /* Send parameters to the kernel module  */
-void send_profile_to_kernel(struct profile_params * params)
+void send_profile_to_kernel(struct profile_params * params,
+			    struct trace_params * tparams)
 {
 	static int kfd = -1;
 
-	if (__no_kernel)
+	if(!params)
 		return;
+
+	/* Set the PID to communicate to the kernel */
+	params->pid = tparams->pid;
+
+	if (__no_kernel) {
+		return;
+	}
 
 	if (kfd < 0) {
 		kfd = open(KERN_PROCFILE, O_RDWR);
@@ -90,6 +98,7 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 
 	/* Setup the parameters that we will pass to the kernel */
 	params->pid = tparams->pid;
+
 	/* This will be always 1 for profiling since we test a single
 	 * vma/page at a time. */
 	params->vma_count = 1;
@@ -116,7 +125,7 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 				skip_first = 0;
 
 			/* Perform interact with the kernel */
-			send_profile_to_kernel(params);
+			send_profile_to_kernel(params, tparams);
 
 			/* Let the task complete. We will collect
 			 * timing information in the process. */
