@@ -23,6 +23,14 @@ void collect_profiling(struct profile * profile, struct trace_params * tparam,
 /* This function recursively deallocates a profile structure */
 void free_profile(struct profile * profile);
 
+/* This function is used to build a partial struct profile_params
+ * construct where only the most impactful @nr_pages are
+ * included. This will then be passed to the lernel. */
+void build_incremental_params(const struct profile * in_profile,
+			      struct profile_params * out_profile,
+			      struct vma_descr * vma_targets, unsigned int vma_count,
+			      unsigned int nr_pages);
+
 /* This function sets the VMA and page index for the current profiling
  * operation. When profiling, we know that the profile_params
  * structure will only contain a single VMA with a single page
@@ -32,6 +40,10 @@ void set_profiling_page(struct profile_params * params,
 
 /* Prints a nicely formatted view of the current profile */
 void print_profile(struct profile * profile);
+
+/* Prints a nicely formatted view of the parameters that will be
+ * passed to the kernel */
+void print_params(struct profile_params * params);
 
 /* Allocate a new set of profile parameters */
 struct profile_params * alloc_params(void);

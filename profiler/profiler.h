@@ -151,7 +151,7 @@ struct profiled_vma_page {
 
 /*structure for keeping output of profiling mode-not relatedd to kernel*/
 struct profiled_vma {
-	int vma_index;
+	unsigned int vma_index;
 	unsigned int page_count;
 	struct profiled_vma_page * pages;
 };

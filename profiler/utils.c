@@ -37,6 +37,7 @@
 #include <asm/ptrace.h>
 
 #include "profiler.h"
+#include "vmas.h"
 #include "utils.h"
 
 /* Collect profiling information after a single round of profiling,
@@ -101,7 +102,90 @@ void free_profile(struct profile * profile)
 		}
 	}
 
-	free(profile->vmas);
+	if (profile->vmas) {
+		free(profile->vmas);
+		profile->vmas = NULL;
+	}
+}
+
+/* This function is used to build a partial struct profile_params
+ * construct where only the most impactful @nr_pages are
+ * included. This will then be passed to the lernel. */
+void build_incremental_params(const struct profile * in_profile,
+			      struct profile_params * out_profile,
+			      struct vma_descr * vma_targets, unsigned int vma_count,
+			      unsigned int nr_pages)
+{
+	/* This function assumes that pages in each VMA in the
+	 * @in_profile have already been sorted within the VMA. We
+	 * then select the page that led to the best timing among all
+	 * the VMA pages and create a brand new profile in this
+	 * way. */
+
+	unsigned int * __page_ind;
+	unsigned int i, j, in_len = in_profile->profile_len;
+
+	/* Reset out_profile. */
+	memset(out_profile, 0, sizeof(struct profile));
+
+	if (!in_profile)
+		return;
+
+	/* We will need to keep an index to the list of pages of each
+	 * VMA in the @in_profile */
+	__page_ind = (unsigned int *)malloc(in_len * sizeof(unsigned int));
+
+	if(!__page_ind)
+		DBG_ABORT("Unable to allocate memory.\n");
+
+	memset(__page_ind, 0, in_len * sizeof(int));
+
+	/* Now for the fun part: scan all the pages in all the VMAs,
+	 * keeping track of the global min and select/add one page at
+	 * a time. */
+	for (i = 0; i < nr_pages; ++i) {
+		unsigned long min_cycles = ~(0UL);
+		int min_vma;
+		for (j = 0; j < in_len; ++j) {
+			struct profiled_vma * in_vma = &in_profile->vmas[j];
+			if (__page_ind[j] < in_vma->page_count) {
+				struct profiled_vma_page * in_page = &in_vma->pages[__page_ind[j]];
+				if (in_page->cycles < min_cycles) {
+					min_vma = j;
+					min_cycles = in_page->cycles;
+				}
+			}
+		}
+
+		/* We found the next page leading to the highest
+		 * speedup. Now add this information in the output
+		 * construct. */
+		struct profiled_vma * vma = &in_profile->vmas[min_vma];
+		struct profiled_vma_page * page = &vma->pages[__page_ind[min_vma]];
+
+		/* Update the output construct with the new page */
+		params_add_page(out_profile, vma, page);
+
+		/* Finally move the page pointer in the considered
+		 * VMA */
+		++(__page_ind[min_vma]);
+	}
+
+	free(__page_ind);
+
+
+	/* Now just do a round where we fill up any missing info from
+	 * the VMAs detected at layout construction time. */
+	for (i = 0; i < out_profile->vma_count; ++i) {
+		for (j = 0; j < vma_count; ++j) {
+			if (vma_targets[j].vma_index == out_profile->vmas[i].vma_index) {
+				out_profile->vmas[i].total_pages = vma_targets[j].total_pages;
+				out_profile->vmas[i].operation = vma_targets[j].operation;
+				break;
+			}
+		}
+	}
+
 }
 
 /* This function sets the VMA and page index for the current profiling
@@ -131,12 +215,39 @@ void print_profile(struct profile * profile)
 	for (i = 0; i < len; ++i) {
 		struct profiled_vma cur_vma = profile->vmas[i];
 		DBG_INFO("========== (%d/%d) VMA index: %d ==========\n",
-			                     i, len, cur_vma.vma_index);
+			 i, len, cur_vma.vma_index);
 
 		for (j = 0; j < cur_vma.page_count; ++j) {
 			struct profiled_vma_page cur_page = cur_vma.pages[j];
-			DBG_INFO("PAGE: %d\t\tCYCLES: %ld\n",
+			DBG_INFO("PAGE: 0x%04x\t\tCYCLES: %ld\n",
 				          cur_page.page_index, cur_page.cycles);
+		}
+	}
+	DBG_INFO("\n-------------------------------------------\n");
+
+}
+
+/* Prints a nicely formatted view of the parameters that will be
+ * passed to the kernel */
+void print_params(struct profile_params * params)
+{
+	unsigned int i, j;
+	unsigned int len = params->vma_count;
+	DBG_INFO("\n----------------- KPARAMS -----------------\n");
+	DBG_INFO("PID  : \t%d\n", params->pid);
+	DBG_INFO("#VMAS: \t%d\n", len);
+	for (i = 0; i < len; ++i) {
+		struct vma_descr cur_vma = params->vmas[i];
+		DBG_INFO("========== (%d/%d) VMA index: %d ==========\n",
+			 i, len, cur_vma.vma_index);
+		DBG_INFO("Index     :\t%d\n", cur_vma.vma_index);
+		DBG_INFO("Tot. Pages:\t%d\n", cur_vma.total_pages);
+		DBG_INFO("Op.  Pages:\t%d\n", cur_vma.page_count);
+		DBG_INFO("Operation :\t%d\n", cur_vma.operation);
+		DBG_INFO("Page list :\n");
+
+		for (j = 0; j < cur_vma.page_count; ++j) {
+			DBG_INFO("\t%03d) +0x%04x\n", j, cur_vma.page_index[j]);
 		}
 	}
 	DBG_INFO("\n-------------------------------------------\n");

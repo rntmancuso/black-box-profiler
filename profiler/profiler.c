@@ -47,32 +47,35 @@ void send_profile_to_kernel(struct profile_params * params)
 	DBG_PRINT("Sending profile...\n");
 }
 
-/* Perform page-by-page timing analysis of the target
- * application. Per-page timing results are accumulated in the @output
- * array. */
-void do_profiling(struct trace_params * tparams,
-		  struct profile * profile)
+/* Perform a first pass over the application's memory layout and
+ * select the VMAs that we will care about. */
+struct vma_descr * do_layout_detect(struct trace_params * tparams,
+				    unsigned int * count)
 {
-	struct profile_params * params = alloc_params();
 	struct vma_descr * vma_targets = NULL;
-	unsigned int vma_count;
 	int res;
-	unsigned i, j;
-	int skip_first = 1;
-
-	/* We are ready to launch the process to be profiled to learn
-	 * about its layout and identify the VMAs we will work
-	 * with. But before we do the first launch, setup the signal
-	 * handling for the parent. */
-	setup_signals();
 
 	/* Now run the task until the breakpoint and select the VMAs
 	 * that will be used for profiling */
-	res = select_vmas(tparams, &vma_targets, &vma_count);
+	res = select_vmas(tparams, &vma_targets, count);
 
 	if (res) {
 		DBG_ABORT("VMA selection failed. Exiting.\n");
 	}
+
+	return vma_targets;
+}
+
+/* Perform page-by-page timing analysis of the target
+ * application. Per-page timing results are accumulated in the @output
+ * array. */
+void do_profiling(struct trace_params * tparams, struct profile * profile,
+		  struct vma_descr * vma_targets, unsigned int vma_count)
+{
+	struct profile_params * params = alloc_params();
+	int res;
+	unsigned i, j;
+	int skip_first = 1;
 
 	/* Setup the parameters that we will pass to the kernel */
 	params->pid = tparams->pid;
@@ -125,8 +128,12 @@ int main(int argc, char* argv[])
 {
 	int opt, i, tracee_cmd_idx, sample_size;
 	struct trace_params tparams;
+	struct vma_descr * vma_targets;
+	unsigned int vma_count;
 	struct profile profile;
+	struct profile_params incr_profile;
 	unsigned int operation;
+	int nr_pages = 3;
 
 	/* Parse command line parameters. Just as an example, this
 	 * program accepts a parameter -e <value> and if specified it
@@ -212,18 +219,29 @@ int main(int argc, char* argv[])
 		return EXIT_FAILURE;
 	}
 
+	/* We are ready to launch the process to be profiled to learn
+	 * about its layout and identify the VMAs we will work
+	 * with. But before we do the first launch, setup the signal
+	 * handling for the parent. */
+	setup_signals();
+
 	/* We are ready for some profiling. Pin the parent to a CPU
 	 * and set it to execute with real-time priority. */
 	set_realtime(1, PARENT_CPU);
 
+	/* Let's start by acquiring the application's profile */
+	vma_targets = do_layout_detect(&tparams, &vma_count);
+
 	/* First mode, perform layout scan and per-page profiling */
-	do_profiling(&tparams, &profile);
+	do_profiling(&tparams, &profile, vma_targets, vma_count);
 
 	/* Output a pretty print of the profile. */
 	print_profile(&profile);
 
+	build_incremental_params(&profile, &incr_profile,
+				 vma_targets, vma_count, nr_pages);
 
-	//get_incremental_profile(profile, profile_len, );
+	print_params(&incr_profile);
 
 	return EXIT_SUCCESS;
 }

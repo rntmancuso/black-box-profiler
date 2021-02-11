@@ -38,7 +38,46 @@
 #include "utils.h"
 #include "vmas.h"
 
-void add_vma_descr(struct vma_descr *vma, struct vma_descr ** vmas,
+/* Add a new page/vma pair in the set of parameters that willl be
+ * passed to the kernel. */
+void params_add_page(struct profile_params * params, struct profiled_vma * vma,
+		     struct profiled_vma_page * page)
+{
+	/* First off, let's figure out if a VMA with the same index
+	 * already exists */
+	unsigned int i;
+	struct vma_descr * out_vma = NULL;
+
+	for (i = 0; i < params->vma_count; ++i) {
+		if (params->vmas[i].vma_index == vma->vma_index) {
+			out_vma = &params->vmas[i];
+			break;
+		}
+	}
+
+	/* The VMA needs to be allocated? */
+	if (!out_vma) {
+		struct vma_descr tmp_vma;
+		tmp_vma.vma_index = vma->vma_index;
+		tmp_vma.page_count = vma->page_count;
+		out_vma = add_vma_descr(&tmp_vma, &params->vmas, &params->vma_count);
+	}
+
+	/* Here we know for sure that out_vma points to a valid VMA to
+	 * which we will add the new page. */
+	if (!out_vma->page_index) {
+		out_vma->page_index = (unsigned int *)malloc(sizeof(unsigned int));
+		out_vma->page_count = 1;
+	} else {
+		++out_vma->page_count;
+		out_vma->page_index = (unsigned int *)realloc(out_vma->page_index,
+				    out_vma->page_count * sizeof(unsigned int));
+	}
+
+	out_vma->page_index[out_vma->page_count-1] = page->page_index;
+}
+
+struct vma_descr * add_vma_descr(struct vma_descr *vma, struct vma_descr ** vmas,
 	     unsigned int * vma_count)
 {
 	if (*vmas == NULL) {
@@ -58,6 +97,8 @@ void add_vma_descr(struct vma_descr *vma, struct vma_descr ** vmas,
 	new_vma->page_count = 0;
 	new_vma->operation = 0;
 	new_vma->page_index = NULL;
+
+	return new_vma;
 }
 
 void add_vma(struct vma_struct *vma, struct vma_descr ** vmas,
