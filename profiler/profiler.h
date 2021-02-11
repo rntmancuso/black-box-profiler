@@ -67,6 +67,7 @@ extern int __verbose_output;
 /* The assembly opcode to use when inserting a breakpoint */
 #define BRKPOINT_INSTR (0xffffffffUL)
 
+#define KERN_PROCFILE "/proc/memprofile"
 
 /*for vma scanning*/
 #define mapped_file_fmt "%32s"

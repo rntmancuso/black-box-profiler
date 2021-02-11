@@ -39,12 +39,23 @@
 
 /* Global variables */
 int __verbose_output = 0;
+int __no_kernel = 0;
 
-/* TODO: implement this. */
+/* Send parameters to the kernel module  */
 void send_profile_to_kernel(struct profile_params * params)
 {
-	(void)params;
-	DBG_PRINT("Sending profile...\n");
+	static int kfd = -1;
+
+	if (__no_kernel)
+		return;
+
+	if (kfd < 0) {
+		kfd = open(KERN_PROCFILE, O_RDWR);
+		if (kfd < 0)
+			DBG_ABORT("Unable to open kernel procfile %s\n", KERN_PROCFILE);
+	}
+
+	write(kfd, (void *)params, sizeof(struct profile_params));
 }
 
 /* Perform a first pass over the application's memory layout and
@@ -143,7 +154,7 @@ int main(int argc, char* argv[])
 	 * end of the command line after all the optional
 	 * arguments. */
 
-	while((opt = getopt(argc, argv, ":s:c:n:m:hv")) != -1) {
+	while((opt = getopt(argc, argv, ":s:c:n:m:hvp")) != -1) {
 		switch (opt) {
 		case 'h':
 			DBG_PRINT(HELP_STRING, argv[0]);
@@ -160,6 +171,11 @@ int main(int argc, char* argv[])
 			else
 				printf("wrong mode input\n");
 				break;*/
+		case 'p':
+			/* In "pretend" mode, do everything except
+			 * interacting with the kernel. */
+			__no_kernel = 1;
+			break;
 		case 'v':
 			__verbose_output = 1;
 			break;
