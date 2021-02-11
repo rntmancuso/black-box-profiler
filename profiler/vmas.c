@@ -38,6 +38,18 @@
 #include "utils.h"
 #include "vmas.h"
 
+/* Returns the total number of pages in the selected VMA targets */
+int get_total_pages(struct vma_descr * vma_targets, unsigned int vma_count)
+{
+	int retval = 0;
+	unsigned int i;
+	for (i = 0; i < vma_count; ++i) {
+		retval += vma_targets[i].total_pages;
+	}
+
+	return retval;
+}
+
 /* Add a new page/vma pair in the set of parameters that willl be
  * passed to the kernel. */
 void params_add_page(struct profile_params * params, struct profiled_vma * vma,
@@ -270,7 +282,7 @@ int select_vmas(struct trace_params * tparams,
 	int res;
 
 	/* First off, run the target process until the breakpoint */
-	res = run_to_symbol(tparams);
+	res = run_to_symbol(tparams, __run_flags);
 
 	if (res) {
 		DBG_FATAL("Unable to run child until [%s]. Exiting.\n", tparams->symbol);

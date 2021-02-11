@@ -40,6 +40,7 @@
 /* Global variables */
 int __verbose_output = 0;
 int __no_kernel = 0;
+int __run_flags = 0;
 
 /* Send parameters to the kernel module  */
 void send_profile_to_kernel(struct profile_params * params,
@@ -95,6 +96,8 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 	int res;
 	unsigned i, j;
 	int skip_first = 1;
+	int total_pages = get_total_pages(vma_targets, vma_count);
+	int pg_count = 0;
 
 	/* Setup the parameters that we will pass to the kernel */
 	params->pid = tparams->pid;
@@ -120,7 +123,7 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 			/* Remember that the debugee is currently at
 			 * the breakpoint the first time we do this */
 			if (!skip_first)
-				res = run_to_symbol(tparams);
+				res = run_to_symbol(tparams, __run_flags);
 			else
 				skip_first = 0;
 
@@ -134,6 +137,9 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 			/* All done for this page, save the collected
 			 * timing info. */
 			collect_profiling(profile, tparams, cur_vma, i, j);
+
+			/* Print progress */
+			print_progress("PROFILING", ++pg_count, total_pages);
 		}
 
 		/* Sort the profile of the current VMA */
@@ -163,7 +169,7 @@ int main(int argc, char* argv[])
 	 * end of the command line after all the optional
 	 * arguments. */
 
-	while((opt = getopt(argc, argv, ":s:c:n:m:hvp")) != -1) {
+	while((opt = getopt(argc, argv, ":s:c:n:m:hvpq")) != -1) {
 		switch (opt) {
 		case 'h':
 			DBG_PRINT(HELP_STRING, argv[0]);
@@ -184,6 +190,12 @@ int main(int argc, char* argv[])
 			/* In "pretend" mode, do everything except
 			 * interacting with the kernel. */
 			__no_kernel = 1;
+			break;
+		case 'q':
+			/* In "quiet" mode, the stdout and stderr
+			 * output of the traced application are
+			 * suppressed. */
+			__run_flags |= RUN_QUIET;
 			break;
 		case 'v':
 			__verbose_output = 1;
@@ -225,10 +237,10 @@ int main(int argc, char* argv[])
 
 	/* Print out the reminder of the command, i.e. what to
 	 * execute and its paramters */
-	DBG_PRINT("Command to execute: [");
+	DBG_INFO("Command to execute: [");
 	for (i = tracee_cmd_idx; i < argc; ++i)
-		DBG_PRINT_NOPREF("%s ", argv[i]);
-	DBG_PRINT_NOPREF("\b]\n");
+		DBG_INFO_NOPREF("%s ", argv[i]);
+	DBG_INFO_NOPREF("\b]\n");
 
 
 	/* We are ready to start the tracee. But let's try to resolve

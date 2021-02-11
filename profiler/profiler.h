@@ -16,6 +16,8 @@
    syscalls. */
 #define ARM_ISA_MASK (~(1UL))
 
+extern int __run_flags;
+
 /* Helper macro to prefix any print statement produced by the host
  * process. */
 #ifdef _VERBOSE_
@@ -32,6 +34,9 @@ extern int __verbose_output;
 
 #define DBG_INFO(format, ...)				\
 	fprintf(stderr, "[DBG] " format, ##__VA_ARGS__)
+
+#define DBG_INFO_NOPREF(format, ...)				\
+	fprintf(stderr, format, ##__VA_ARGS__)
 
 #define DBG_FATAL(format, ...)				\
 	fprintf(stderr, "[DBG] FATAL: " format, ##__VA_ARGS__)

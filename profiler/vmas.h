@@ -18,6 +18,9 @@
 #define PAGE_SIZE (1 << PAGE_SHIFT)
 #endif
 
+/* Returns the total number of pages in the selected VMA targets */
+int get_total_pages(struct vma_descr * vma_targets, unsigned int vma_count);
+
 /* Add a new page/vma pair in the set of parameters that willl be
  * passed to the kernel. */
 void params_add_page(struct profile_params * params, struct profiled_vma * vma,

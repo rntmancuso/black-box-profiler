@@ -13,6 +13,9 @@
 #ifndef __PROFILER_UTILS_H__
 #define __PROFILER_UTILS_H__
 
+/* Run flags for traceee */
+#define RUN_QUIET     (1 << 0)
+
 /* Collect profiling information after a single round of profiling,
  * i.e. after timing the effect of manipulating the cacheability of a
  * single page. */
@@ -63,7 +66,7 @@ void set_realtime(int prio, int cpu);
 void * resolve_symbol(char * elf_path, char * symbol_to_search);
 
 /* Run the debuggee until we hit the break-point */
-int run_to_symbol(struct trace_params * tparams);
+int run_to_symbol(struct trace_params * tparams, unsigned int run_flags);
 
 /* Run the debuggee until we hit the break-point */
 int run_to_completion(struct trace_params * tparams);
@@ -74,5 +77,10 @@ int run_to_completion(struct trace_params * tparams);
  * tracee/child.
  */
 void setup_signals(void);
+
+/* Print a progress bar. Adapted from:
+ * https://gist.github.com/amullins83/24b5ef48657c08c4005a8fab837b7499 */
+void print_progress(const char * prefix, size_t count, size_t max);
+
 
 #endif

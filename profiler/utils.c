@@ -495,7 +495,7 @@ err_close:
 /* Executes tracee program. Returns 0 upon error. Won't return if
  * successful in the child, but will return the PID of the spawned
  * child process in the parent. */
-static pid_t run_debuggee(char * program_name, char * arguments [])
+static pid_t run_debuggee(char * program_name, char * arguments [], unsigned int run_flags)
 {
 	/* First, attempt a fork to spawn a child process */
 	pid_t child_pid = fork();
@@ -508,7 +508,7 @@ static pid_t run_debuggee(char * program_name, char * arguments [])
 
 		//setenv("MALLOC_TOP_PAD_", "1400000", 1);
 
-		/*Allow tracing of this process*/
+		/* Allow tracing of this process */
 		if (ptrace(PTRACE_TRACEME, 0, 0, 0) < 0)
 		{
 			DBG_ABORT("Unable to initate tracing on program %s\n",
@@ -522,6 +522,18 @@ static pid_t run_debuggee(char * program_name, char * arguments [])
 		}
 
 		DBG_PRINT("Executing tracee on CPU %d\n", cpu);
+
+		if (run_flags & RUN_QUIET) {
+			/* Suppress the stderr and stdout of the
+			 * tracee */
+			static int null_fd = -1;
+			if (null_fd < 0 && (null_fd = open("/dev/null", O_RDWR)) < 0) {
+				DBG_ABORT("Unable to open /dev/null device.\n");
+			}
+
+			dup2(null_fd, fileno(stdout));
+			dup2(null_fd, fileno(stderr));
+		}
 
 		/* Replace this process's image with the given program image
 		   will load a new binary image into memory and start
@@ -654,14 +666,14 @@ static void continue_until_end(struct trace_params * tparams)
 }
 
 /* Run the debuggee until we hit the break-point */
-int run_to_symbol(struct trace_params * tparams)
+int run_to_symbol(struct trace_params * tparams, unsigned int run_flags)
 {
 	sigset_t waitmask;
 	siginfo_t info;
 	int signo;
 	int wstat;
 
-	tparams->pid = run_debuggee(tparams->exe_name, tparams->exe_params);
+	tparams->pid = run_debuggee(tparams->exe_name, tparams->exe_params, run_flags);
 	/* The first signal we expect is when the process begins
 	 * execution */
 
@@ -752,4 +764,31 @@ void setup_signals(void)
 	/* Block SIGCHLD signal so that it is never asynchronously
 	 * executed */
 	sigprocmask(SIG_BLOCK, &waitmask, NULL);
+}
+
+#define PERCENTAGE(V, T) (100 - (((T - V) * 100) / T))
+
+/* Print a progress bar. Adapted from:
+ * https://gist.github.com/amullins83/24b5ef48657c08c4005a8fab837b7499 */
+void print_progress(const char * prefix, size_t count, size_t max)
+{
+	const char start[] = ": [";
+	const char end[] = "]";
+	const size_t suffix_length = sizeof(end) - 1;
+	int pref_len = strlen(prefix);
+	size_t prefix_length = pref_len + sizeof(start) - 1;
+	char *buffer = calloc(100 + prefix_length + suffix_length + 1, 1);
+	size_t i = 0;
+
+	strcpy(buffer, prefix);
+	strcpy(buffer + pref_len, start);
+	for (; i < 100; ++i)
+	{
+		buffer[prefix_length + i] = i < PERCENTAGE(count, max) ? '#' : ' ';
+	}
+
+	strcpy(&buffer[prefix_length + i], end);
+	printf("\b%c[2K\r%s", 27, buffer);
+	fflush(stdout);
+	free(buffer);
 }
