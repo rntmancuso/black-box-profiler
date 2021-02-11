@@ -25,6 +25,7 @@ void collect_profiling(struct profile * profile, struct trace_params * tparam,
 
 /* This function recursively deallocates a profile structure */
 void free_profile(struct profile * profile);
+void free_params(struct profile_params * params);
 
 /* This function is used to build a partial struct profile_params
  * construct where only the most impactful @nr_pages are

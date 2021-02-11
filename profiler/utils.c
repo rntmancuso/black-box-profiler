@@ -108,6 +108,27 @@ void free_profile(struct profile * profile)
 	}
 }
 
+void free_params(struct profile_params * params)
+{
+	unsigned int i;
+	if (!params)
+		return;
+
+	for (i = 0; i < params->vma_count; ++i) {
+		struct vma_descr * cur_entry = &params->vmas[i];
+		if (cur_entry->page_index) {
+			free(cur_entry->page_index);
+			cur_entry->page_index = NULL;
+		}
+	}
+
+	if (params->vmas) {
+		free(params->vmas);
+		params->vma_count = 0;
+		params->vmas = NULL;
+	}
+}
+
 /* This function is used to build a partial struct profile_params
  * construct where only the most impactful @nr_pages are
  * included. This will then be passed to the lernel. */

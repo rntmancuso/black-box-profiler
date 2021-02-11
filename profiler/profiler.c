@@ -146,8 +146,32 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 		qsort(profile->vmas[i].pages, profile->vmas[i].page_count,
 		      sizeof(struct profiled_vma_page), profiled_vma_page_cmp);
 	}
+}
 
+void do_ranking(struct trace_params * tparams, struct profile * profile,
+		  struct vma_descr * vma_targets, unsigned int vma_count)
+{
+	int total_pages = get_total_pages(vma_targets, vma_count);
+	struct profile_params incr_profile;
+	int i;
 
+	for (i = 0; i < total_pages; ++i) {
+		/* Generate new incremental profile */
+		build_incremental_params(profile, &incr_profile,
+					 vma_targets, vma_count, i);
+
+		/* If verbose output requested, print out what is
+		 * about to be sent to the kernel */
+		if (__verbose_output)
+			print_params(&incr_profile);
+
+		/* Perform interact with the kernel */
+		send_profile_to_kernel(&incr_profile, tparams);
+
+		free_params(&incr_profile);
+
+		/* TODO: gather timing results from run with incremental profile */
+	}
 }
 
 int main(int argc, char* argv[])
@@ -157,9 +181,7 @@ int main(int argc, char* argv[])
 	struct vma_descr * vma_targets;
 	unsigned int vma_count;
 	struct profile profile;
-	struct profile_params incr_profile;
 	unsigned int operation;
-	int nr_pages = 3;
 
 	/* Parse command line parameters. Just as an example, this
 	 * program accepts a parameter -e <value> and if specified it
@@ -275,10 +297,8 @@ int main(int argc, char* argv[])
 	/* Output a pretty print of the profile. */
 	print_profile(&profile);
 
-	build_incremental_params(&profile, &incr_profile,
-				 vma_targets, vma_count, nr_pages);
-
-	print_params(&incr_profile);
+	/* Now perform full page ranking */
+	do_ranking(&tparams, &profile, vma_targets, vma_count);
 
 	return EXIT_SUCCESS;
 }
