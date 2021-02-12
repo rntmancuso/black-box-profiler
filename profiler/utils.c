@@ -810,6 +810,9 @@ void print_progress(const char * prefix, size_t count, size_t max)
 
 	strcpy(&buffer[prefix_length + i], end);
 	printf("\b%c[2K\r%s", 27, buffer);
+	if (count == max) {
+		printf("\n");
+	}
 	fflush(stdout);
 	free(buffer);
 }

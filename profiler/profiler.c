@@ -153,7 +153,7 @@ void do_ranking(struct trace_params * tparams, struct profile * profile,
 {
 	int total_pages = get_total_pages(vma_targets, vma_count);
 	struct profile_params incr_profile;
-	int i;
+	int i, res;
 
 	for (i = 0; i < total_pages; ++i) {
 		/* Generate new incremental profile */
@@ -165,10 +165,17 @@ void do_ranking(struct trace_params * tparams, struct profile * profile,
 		if (__verbose_output)
 			print_params(&incr_profile);
 
+		res = run_to_symbol(tparams, __run_flags);
+
 		/* Perform interact with the kernel */
 		send_profile_to_kernel(&incr_profile, tparams);
 
+		res = run_to_completion(tparams);
+
 		free_params(&incr_profile);
+
+		/* Print progress */
+		print_progress("RANKING", i+1, total_pages);
 
 		/* TODO: gather timing results from run with incremental profile */
 	}
