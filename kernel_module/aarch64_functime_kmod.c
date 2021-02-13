@@ -65,8 +65,9 @@ struct vma_descr
         unsigned int * page_index;
 };
 
-/*for using function (__mm_populate)  which is not exported*/
-static void (*mm_populate_ptr)(unsigned long addr, unsigned long len,int ignore_errors) = NULL;
+/*for using function ( populate_vma_page_range)  which is not exported*/
+static long (*populate_vma_page_range_ptr)(struct vm_area_struct *vma,
+		unsigned long start, unsigned long end, int *locked) = NULL;
 
 struct profile_params cp;
 
@@ -159,7 +160,84 @@ int init_cpu_counter(void)
 }
 #endif
 
+/*inline void invalidate_cache(start,end)
+{
+  __dma_inv_area:
+	add	x1, x1, x0
+	dcache_line_size x2, x3
+	sub	x3, x2, #1
+	tst	x1, x3				// end cache line aligned?
+	bic	x1, x1, x3
+	b.eq	1f
+	dc	civac, x1			// clean & invalidate D / U line
+1:	tst	x0, x3				// start cache line aligned?
+	bic	x0, x0, x3
+	b.eq	2f
+	dc	civac, x0			// clean & invalidate D / U line
+	b	3f
+2:	dc	civac, x0			// clean & invalidate D / U line
+3:	add	x0, x0, x2
+	cmp	x0, x1
+	b.lo	2b
+	dsb	sy
+	ret
+	}*/
 
+static int __mm_populate_mod(unsigned long start, unsigned long len, int ignore_errors, struct task_struct *task)
+{
+        struct mm_struct *mm = task->mm/*current->mm*/;
+        unsigned long end, nstart, nend;
+        struct vm_area_struct *vma = NULL;
+        int locked = 0;
+        long ret = 0;
+
+        VM_BUG_ON(start & ~PAGE_MASK);
+        VM_BUG_ON(len != PAGE_ALIGN(len));
+        end = start + len;
+
+        for (nstart = start; nstart < end; nstart = nend) {
+		/* 
+		 * We want to fault in pages for [nstart; end) address range.                                                                                                 * Find first corresponding VMA.
+		 */
+		if (!locked) {
+                        locked = 1;
+                        down_read(&mm->mmap_sem);
+                        vma = find_vma(mm, nstart);
+                } else if (nstart >= vma->vm_end)
+                        vma = vma->vm_next;
+                if (!vma || vma->vm_start >= end)
+                        break;
+		/*
+		 *Set [nstart; nend) to intersection of desired address  
+		 *range with the first VMA. Also, skip undesirable VMA types. 
+		 */
+		nend = min(end, vma->vm_end);
+                if (vma->vm_flags & (VM_IO | VM_PFNMAP))
+                        continue;
+                if (nstart < vma->vm_start)
+                        nstart = vma->vm_start;
+		/*
+		 *Now fault in a range of pages. populate_vma_page_range() 
+		 * double checks the vma flags, so that it won't mlock pages 
+		 * if the vma was already munlocked.
+		 */
+		ret = populate_vma_page_range_ptr(vma, nstart, nend, &locked);
+		if (ret < 0) {
+                        if (ignore_errors) {
+                                ret = 0;
+                                continue;/* continue at next VMA */
+                        }
+                        break;
+                }
+		nend = nstart + ret * PAGE_SIZE;
+                ret = 0;
+        }
+        if (locked)
+                up_read(&mm->mmap_sem);
+        return ret;/* 0 or negative error code */
+}
+
+		
 static int cacheability_modifier (pte_t *ptep, unsigned long addr,void *data)
 {
         int i;
@@ -195,11 +273,12 @@ static int cacheability_modifier (pte_t *ptep, unsigned long addr,void *data)
 	  
 		//changing prot bits of vma to make it noncacheable
 		((struct Data*)data)->vmas->vm_page_prot = pgprot_noncached(((struct Data*)data)->vmas->vm_page_prot);
-		printk("after page_prot changing\n");
+		//printk("after page_prot changing\n");
 
 		// making new pte
 		pfn = pte_pfn(*pte); //with the old pte 
 		newpte = pfn_pte(pfn, ((struct Data*)data)->vmas->vm_page_prot);
+		//newpte = pfn_pte(pfn,pgprot_noncached(((struct Data*)data)->vmas->vm_page_prot));
 		//newpte = mk_pte(newpage, vma->vm_page_prot);
 
 		flush_cache_mm (((struct Data*)data)->mm);
@@ -221,7 +300,7 @@ static int cacheability_modifier (pte_t *ptep, unsigned long addr,void *data)
 		//calculating pfn
 		pfn = pte_pfn(*pte); //with the old pte
 		//making new pte
-		newpte = pfn_pte(pfn, ((struct Data*)data)->vmas->vm_page_prot);
+		 newpte = pfn_pte(pfn,pgprot_noncached(((struct Data*)data)->vmas->vm_page_prot));
 		//Perform PA-based invaluidation on L1 and L2 
 		//invalidate_page_l2(phys);
 		invalidate_page_l1((ulong)page_v);//argument used to be addr
@@ -246,13 +325,15 @@ static int cacheability_modifier (pte_t *ptep, unsigned long addr,void *data)
 void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *task)
 {
  
-	
+	int locked;
 	int i = 0,j;
 	int process_vma = 0; //for walking on list of vmas of the process sent by user
 	data->mm = mm;
 	data->vmas = mm->mmap; //first vma of the process
 	printk("vma_numbers: %d\n",cp.vma_count);
-	
+
+	locked = 1;
+	down_read(&mm->mmap_sem);
 	for (i = 0; i < cp.vma_count ; i++) //for walking on cp.vmas
 	{
 
@@ -272,7 +353,7 @@ void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *ta
 			      	{
 	                                printk("before mm_populate_ptr, VMA[%d] is: %d and data->vmas->vm_start: %lx\n",i,cp.vmas[i].vma_index, data->vmas->vm_start);
 				    
-					mm_populate_ptr(data->vmas->vm_start, data->vmas->vm_end - data->vmas->vm_start,1);
+					__mm_populate_mod(data->vmas->vm_start, data->vmas->vm_end - data->vmas->vm_start,1,task);
 
 					data->page_addr = kmalloc(cp.vmas[i].page_count*sizeof(int),GFP_KERNEL);
 			
@@ -282,7 +363,7 @@ void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *ta
 						printk("cp.vmas[%d].page_index[%d]:%d\n",i,j,cp.vmas[i].page_index[j]);
 		    
 					}
-					//apply_to_page_range(data->vmas->vm_mm, data->vmas->vm_start, data->vmas->vm_end - data->vmas->vm_start,cacheability_modifier,data);
+					apply_to_page_range(data->vmas->vm_mm, data->vmas->vm_start, data->vmas->vm_end - data->vmas->vm_start,cacheability_modifier,data);
 			         
 
 
@@ -301,6 +382,8 @@ void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *ta
 	  
 		}
 	} //*
+	if(locked)
+		up_read(&mm->mmap_sem);
 }
 
 
@@ -325,7 +408,7 @@ void get_vma (void)
 		       
 			data->vmas = mm->mmap; //not data.vms bc data is pointer // this is vma0
 			//printk("data->vmas->vm_start (vma 0) : %x\n", data->vmas->vm_start);
-			vma_finder(mm,data,task);
+			vma_finder(mm,data,task); //
 		}
 	
 	}
@@ -393,18 +476,18 @@ static int mm_exp_load(void){
 	}
 #endif
 
-	/* Attempt to find symbol(__mm_populate) */
-	if (!mm_populate_ptr)
+	/* Attempt to find symbol(populate_vma_page_range) */
+	if (!populate_vma_page_range_ptr)
 	{
 		preempt_disable();
 		mutex_lock(&module_mutex);
-		mm_populate_ptr = (void*) kallsyms_lookup_name("__mm_populate");
+		populate_vma_page_range_ptr = (void*)kallsyms_lookup_name("populate_vma_page_range");
 		mutex_unlock(&module_mutex);
 		preempt_enable();
 
 		//Have we found a valid symbol?
-		if (!mm_populate_ptr) {
-			pr_err("Unable to find __mm_populate symbol. Aborting.\n");
+		if (!populate_vma_page_range_ptr) {
+			pr_err("Unable to find populate_vma_page_range symbol. Aborting.\n");
 			return -ENOSYS;
 		}
 	}
