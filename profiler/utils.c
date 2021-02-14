@@ -172,9 +172,14 @@ void build_incremental_params(const struct profile * in_profile,
 			struct profiled_vma * in_vma = &in_profile->vmas[j];
 			if (__page_ind[j] < in_vma->page_count) {
 				struct profiled_vma_page * in_page = &in_vma->pages[__page_ind[j]];
-				if (in_page->cycles < min_cycles) {
+				if (__page_op == PAGE_CACHEABLE &&
+				    in_page->cycles < min_cycles) {
 					min_vma = j;
 					min_cycles = in_page->cycles;
+				} else if (__page_op == PAGE_NONCACHEABLE &&
+					   LONG_MAX - in_page->cycles < min_cycles) {
+					min_vma = j;
+					min_cycles = LONG_MAX - in_page->cycles;
 				}
 			}
 		}
@@ -875,11 +880,13 @@ void setup_signals(void)
 void print_progress(const char * prefix, size_t count, size_t max)
 {
 	const char start[] = ": [";
-	const char end[] = "]";
+	const char end[] = "] (";
 	const size_t suffix_length = sizeof(end) - 1;
+	char ratio [32];
+	int ratio_len = sprintf(ratio, "%ld/%ld)", count, max);
 	int pref_len = strlen(prefix);
 	size_t prefix_length = pref_len + sizeof(start) - 1;
-	char *buffer = calloc(100 + prefix_length + suffix_length + 1, 1);
+	char *buffer = calloc(100 + prefix_length + suffix_length + ratio_len +1, 1);
 	size_t i = 0;
 
 	strcpy(buffer, prefix);
@@ -890,6 +897,8 @@ void print_progress(const char * prefix, size_t count, size_t max)
 	}
 
 	strcpy(&buffer[prefix_length + i], end);
+	strcpy(&buffer[prefix_length + i + suffix_length], ratio);
+
 	printf("\b%c[2K\r%s", 27, buffer);
 	if (count == max) {
 		printf("\n");

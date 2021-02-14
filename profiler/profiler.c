@@ -55,6 +55,11 @@ void send_profile_to_kernel(struct profile_params * params,
 	/* Set the PID to communicate to the kernel */
 	params->pid = tparams->pid;
 
+	/* If verbose output requested, print out what is
+	 * about to be sent to the kernel */
+	if (__verbose_output)
+		print_params(params);
+
 	if (__no_kernel) {
 		return;
 	}
@@ -164,11 +169,6 @@ void do_ranking(struct trace_params * tparams, struct profile * profile,
 		/* Generate new incremental profile */
 		build_incremental_params(profile, &incr_profile,
 					 vma_targets, vma_count, i);
-
-		/* If verbose output requested, print out what is
-		 * about to be sent to the kernel */
-		if (__verbose_output)
-			print_params(&incr_profile);
 
 		res = run_to_symbol(tparams, __run_flags);
 
