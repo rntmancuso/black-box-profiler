@@ -25,6 +25,7 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <sched.h>
+#include <limits.h>
 
 /* this part for reading elf */
 #include <sys/types.h>
@@ -322,10 +323,17 @@ void set_realtime(int prio, int cpu)
 
 /* Compare function for qsort */
 int profiled_vma_page_cmp (const void * a, const void * b) {
-	return (
-	    ((struct profiled_vma_page*)a)->cycles -
-	    ((struct profiled_vma_page*)b)->cycles
-	    );
+	if (__page_op == PAGE_CACHEABLE) {
+		return (
+			((struct profiled_vma_page*)a)->cycles -
+			((struct profiled_vma_page*)b)->cycles
+			);
+	} else {
+		return (
+			((struct profiled_vma_page*)b)->cycles -
+			((struct profiled_vma_page*)a)->cycles
+			);
+	}
 }
 
 /* Get the value of the link register value. LR keeps the return
@@ -359,6 +367,40 @@ static long get_LR (pid_t pid)
 #endif
 	(void)pid;
 	return lr;
+}
+
+/* Get the program counter in the current tracee's state. Returns -1
+ * on failure, 0 on success. */
+static long get_PC (pid_t pid, unsigned long * addr)
+{
+#ifdef __arm__
+	struct user_regs regs;
+	memset(&regs, 0, sizeof(regs));
+	/* Get registers of the child */
+	if (ptrace(PTRACE_GETREGS, pid, NULL, &regs) < 0) {
+		DBG_PRINT("Unable to retrieve tracee PC register.");
+		return -1;
+	}
+	*addr = regs.uregs[15];
+	return 0;
+#elif __aarch64__
+	struct user_regs_struct gregs;
+	struct iovec iovec;
+	iovec.iov_base = &gregs;
+	iovec.iov_len = sizeof (gregs);
+
+	if (ptrace(PTRACE_GETREGSET, pid, NT_PRSTATUS, &iovec) < 0) {
+		DBG_PRINT("Unable to retrieve tracee registers.");
+		return -1;
+	}
+	*addr = gregs.pc;
+	return 0;
+#else
+#warning No get_PC routine implemented on this architecture!
+	(void)pid;
+	(void)addr;
+#endif
+	return 0;
 }
 
 /* Setting the program counter to the specified value. Returns -1 on
@@ -594,6 +636,7 @@ static int get_child_wstat (void)
 		DBG_PERROR(NULL);
 		return -1;
 	} else if (WIFSTOPPED(wstat) || WIFEXITED(wstat)) {
+		DBG_PRINT("Waitpid() returned PID = %d\n", pid);
 		return wstat;
 	}
 
@@ -691,7 +734,6 @@ int run_to_symbol(struct trace_params * tparams, unsigned int run_flags)
 {
 	sigset_t waitmask;
 	siginfo_t info;
-	int signo;
 	int wstat;
 
 	tparams->pid = run_debuggee(tparams->exe_name, tparams->exe_params, run_flags);
@@ -701,26 +743,30 @@ int run_to_symbol(struct trace_params * tparams, unsigned int run_flags)
 	/* Wait for signals from the child */
 	sigaddset(&waitmask, SIGCHLD);
 
-	signo = sigwaitinfo(&waitmask, &info);
+	sigwaitinfo(&waitmask, &info);
 	wstat = get_child_wstat();
 
-	DBG_PRINT("PID %d stopped by signal %d\n", tparams->pid, WSTOPSIG(wstat));
+	DBG_PRINT("PID %d stopped by signal %d (%s)\n", tparams->pid,
+		  WSTOPSIG(wstat), sys_siglist[WSTOPSIG(wstat)]);
 
 	if(!WIFSTOPPED(wstat)) {
-		DBG_ABORT("Unexpected child status %d. Exiting.\n", wstat);
+		DBG_FATAL("Unexpected child status %d. Exiting.\n", wstat);
+		return -1;
 	}
 
 	continue_until_breakpoint(tparams);
 
 	/* The second signal we expect is when the process hits the
 	 * entry breakpoint */
-	signo = sigwaitinfo(&waitmask, &info);
+	sigwaitinfo(&waitmask, &info);
 	wstat = get_child_wstat();
 
-	DBG_PRINT("PID %d stopped by signal %d\n", tparams->pid, WSTOPSIG(wstat));
+	DBG_PRINT("PID %d stopped by signal %d (%s)\n", tparams->pid,
+		  WSTOPSIG(wstat), sys_siglist[WSTOPSIG(wstat)]);
 
 	if(!WIFSTOPPED(wstat)) {
-		DBG_ABORT("Unexpected child status %d. Exiting.\n", wstat);
+		DBG_FATAL("Unexpected child status %d. Exiting.\n", wstat);
+		return -1;
 	}
 
 	/* If we have reached this point, the child has reached the
@@ -729,13 +775,35 @@ int run_to_symbol(struct trace_params * tparams, unsigned int run_flags)
 	return 0;
 }
 
+/* Handle a timeout event for the tracee. It might happen when we make
+ * instruction pages non-cacheable */
+static void handle_tracee_timeout(struct trace_params * tparams)
+{
+	sigset_t waitmask;
+	siginfo_t info;
+	int wstat;
+
+	get_timing(tparams->t_end);
+	kill(tparams->pid, SIGKILL);
+	sigwaitinfo(&waitmask, &info);
+	wstat = get_child_wstat();
+
+	DBG_PRINT("PID %d killed. Got signal %d (%s)\n", tparams->pid,
+		  WSTOPSIG(wstat), sys_siglist[WSTOPSIG(wstat)]);
+}
+
 /* Run the debuggee until we hit the break-point */
 int run_to_completion(struct trace_params * tparams)
 {
 	sigset_t waitmask;
 	siginfo_t info;
-	int signo;
-	int wstat;
+	int wstat, res;
+	unsigned long stopped_at;
+
+	struct timespec timeout = {
+		.tv_sec = 5,         /* seconds */
+		.tv_nsec = 0,        /* nanoseconds */
+	};
 
 	/* We continue from the breakpoint until the return of the
 	 * target function. */
@@ -744,23 +812,36 @@ int run_to_completion(struct trace_params * tparams)
 	/* Wait for signals from the child */
 	sigaddset(&waitmask, SIGCHLD);
 
-	signo = sigwaitinfo(&waitmask, &info);
+	res = sigtimedwait(&waitmask, &info, &timeout);
+	if (res < 0 && errno == EAGAIN) {
+		handle_tracee_timeout(tparams);
+		DBG_PRINT("PID %d timeout (%ld sec.) expired\n", tparams->pid, timeout.tv_sec);
+		return 0;
+	}
 	wstat = get_child_wstat();
 
-	DBG_PRINT("PID %d stopped by signal %d\n", tparams->pid, WSTOPSIG(wstat));
+	DBG_PRINT("PID %d stopped by signal %d (%s)\n", tparams->pid,
+		  WSTOPSIG(wstat), sys_siglist[WSTOPSIG(wstat)]);
 
 	if(!WIFSTOPPED(wstat)) {
-		DBG_ABORT("Unexpected child status %d. Exiting.\n", wstat);
+		DBG_FATAL("Unexpected child status %d. Exiting.\n", wstat);
+		return -1;
 	}
 
 	continue_until_end(tparams);
 
 	/* The second signal we expect is when the process exits */
-	signo = sigwaitinfo(&waitmask, &info);
+	sigwaitinfo(&waitmask, &info);
 	wstat = get_child_wstat();
 
+	DBG_PRINT("PID %d stopped by signal %d (%s)\n", tparams->pid,
+		  WSTOPSIG(wstat),  sys_siglist[WSTOPSIG(wstat)]);
+
 	if(!WIFEXITED(wstat)) {
-		DBG_ABORT("Unexpected child status %d. Exiting.\n", wstat);
+		get_PC(tparams->pid, &stopped_at);
+		DBG_FATAL("Unexpected child status %d [stopped at 0x%08lx]. Exiting.\n",
+			  wstat, stopped_at);
+		return -1;
 	}
 
 	DBG_PRINT("PID %d exited.\n", tparams->pid);

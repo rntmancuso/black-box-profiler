@@ -142,6 +142,7 @@ static void vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
 	static int get_anon = 1;
 	static int get_text = 1;
 
+	int get_heap = 1;
 	int get_stack = 0;
 
 	if ((!(strcmp(vma->mappedfile,"anonymous")) && get_anon))
@@ -150,7 +151,7 @@ static void vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
 		add_vma(vma, vmas, vma_count);
 	}
 
-	else if ((strcmp(vma->mappedfile,"[heap]")) == 0)
+	else if (get_heap && (strcmp(vma->mappedfile,"[heap]")) == 0)
 	{
 		add_vma(vma, vmas, vma_count);
 	}
@@ -262,6 +263,9 @@ static void read_proc_maps_file(pid_t pid, struct vma_descr ** vmas,
 		/* Make sure buffer is zero-terminated. */
 		buf[255] = '\0';
 		buf[strlen(buf)-1] = '\0';
+
+		DBG_PRINT("%s\n", buf);
+
 		vma = scan_proc_maps_line(nvma, buf);
 
 		/* for finding vma indices and size of each vma */

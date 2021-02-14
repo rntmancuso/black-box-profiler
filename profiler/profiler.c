@@ -41,6 +41,7 @@
 int __verbose_output = 0;
 int __no_kernel = 0;
 int __run_flags = 0;
+enum page_operation __page_op = PAGE_CACHEABLE;
 
 /* Send parameters to the kernel module  */
 void send_profile_to_kernel(struct profile_params * params,
@@ -65,6 +66,8 @@ void send_profile_to_kernel(struct profile_params * params,
 	}
 
 	write(kfd, (void *)params, sizeof(struct profile_params));
+
+	DBG_PRINT("Kernel interaction completed.\n");
 }
 
 /* Perform a first pass over the application's memory layout and
@@ -119,6 +122,8 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 		for (j = 0; j < cur_vma->total_pages; ++j) {
 			/* Select the j-th page of this vma for profiling */
 			set_profiling_page(params, cur_vma, j);
+
+			params->vmas[0].operation = __page_op;
 
 			/* Remember that the debugee is currently at
 			 * the breakpoint the first time we do this */
@@ -204,17 +209,16 @@ int main(int argc, char* argv[])
 			DBG_PRINT(HELP_STRING, argv[0]);
 			return EXIT_SUCCESS;
 			break;
-			/*case 'm': //this doesnt work rn
-			mode = optarg; //either profiling or running
-			if(strcmp("profile",optarg) == 0)
-			{
-			  kernel_params.touched_vmas... = 1;
-			  printf("mode is :%s and size is:%d\n",mode,kernel_params.size);}
-			else if (strcmp("run",optarg) == 0)
-			  kernel_params.size = 10;
+		case 'm': /* Determine the operation mode. */
+			if(strcmp("c", optarg) == 0)
+				__page_op = PAGE_CACHEABLE;
+			else if (strcmp("nc", optarg) == 0)
+				__page_op = PAGE_NONCACHEABLE;
+			else if (strcmp("mi", optarg) == 0)
+				__page_op = PAGE_MIGRATE;
 			else
-				printf("wrong mode input\n");
-				break;*/
+				DBG_ABORT("Unknown mode %s. Exiting.\n", optarg);
+			break;
 		case 'p':
 			/* In "pretend" mode, do everything except
 			 * interacting with the kernel. */
@@ -293,7 +297,7 @@ int main(int argc, char* argv[])
 
 	/* We are ready for some profiling. Pin the parent to a CPU
 	 * and set it to execute with real-time priority. */
-	set_realtime(1, PARENT_CPU);
+	set_realtime(3, PARENT_CPU);
 
 	/* Let's start by acquiring the application's profile */
 	vma_targets = do_layout_detect(&tparams, &vma_count);
@@ -305,7 +309,7 @@ int main(int argc, char* argv[])
 	print_profile(&profile);
 
 	/* Now perform full page ranking */
-	do_ranking(&tparams, &profile, vma_targets, vma_count);
+	//do_ranking(&tparams, &profile, vma_targets, vma_count);
 
 	return EXIT_SUCCESS;
 }

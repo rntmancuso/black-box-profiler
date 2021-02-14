@@ -17,6 +17,7 @@
 #define ARM_ISA_MASK (~(1UL))
 
 extern int __run_flags;
+extern enum page_operation __page_op;
 
 /* Helper macro to prefix any print statement produced by the host
  * process. */
@@ -173,6 +174,18 @@ enum tracee_stage {
 	TRACEE_ENTRY = 0,
 	TRACEE_EXIT,
 	TRACEE_INIT,
+};
+
+enum page_operation {
+	/* Make all pages non-cacheable but keep the ones in the list
+	 * as cacheable */
+	PAGE_CACHEABLE = 0,
+	/* Keep all pages as cacheable, but make the ones in the list
+	 * non-cacheable */
+	PAGE_NONCACHEABLE,
+	/* Migrate pages specified in the list to the provate cache
+	 * pool */
+	PAGE_MIGRATE,
 };
 
 /* For measuring time directly through per-core cycle counters */
