@@ -27,6 +27,13 @@ void collect_profiling(struct profile * profile, struct trace_params * tparam,
 void free_profile(struct profile * profile);
 void free_params(struct profile_params * params);
 
+/* This function is used to build a struct profile_params where the
+ * entire of target VMAs is passed but only 1 page at a time is
+ * selected for kernel-side manipulation. */
+void build_profiling_params(struct profile_params * out_profile,
+			    struct vma_descr * vma_targets, unsigned int vma_count,
+			    unsigned int vma_idx, unsigned int page_idx);
+
 /* This function is used to build a partial struct profile_params
  * construct where only the most impactful @nr_pages are
  * included. This will then be passed to the lernel. */

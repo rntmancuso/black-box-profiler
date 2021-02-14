@@ -100,7 +100,7 @@ struct vma_descr * do_layout_detect(struct trace_params * tparams,
 void do_profiling(struct trace_params * tparams, struct profile * profile,
 		  struct vma_descr * vma_targets, unsigned int vma_count)
 {
-	struct profile_params * params = alloc_params();
+	struct profile_params params;
 	int res;
 	unsigned i, j;
 	int skip_first = 1;
@@ -108,12 +108,8 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 	int pg_count = 0;
 
 	/* Setup the parameters that we will pass to the kernel */
-	params->pid = tparams->pid;
-
-	/* This will be always 1 for profiling since we test a single
-	 * vma/page at a time. */
-	params->vma_count = 1;
-	add_vma_descr(&vma_targets[0], &params->vmas, &params->vma_count);
+	memset(&params, 0, sizeof(struct profile_params));
+	params.pid = tparams->pid;
 
 	/* Make sure we start with a clean profile */
 	memset(profile, 0, sizeof(struct profile));
@@ -126,9 +122,8 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 
 		for (j = 0; j < cur_vma->total_pages; ++j) {
 			/* Select the j-th page of this vma for profiling */
-			set_profiling_page(params, cur_vma, j);
-
-			params->vmas[0].operation = __page_op;
+			build_profiling_params(&params, vma_targets,
+					       vma_count, i, j);
 
 			/* Remember that the debugee is currently at
 			 * the breakpoint the first time we do this */
@@ -138,7 +133,7 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 				skip_first = 0;
 
 			/* Perform interact with the kernel */
-			send_profile_to_kernel(params, tparams);
+			send_profile_to_kernel(&params, tparams);
 
 			/* Let the task complete. We will collect
 			 * timing information in the process. */
@@ -147,6 +142,9 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 			/* All done for this page, save the collected
 			 * timing info. */
 			collect_profiling(profile, tparams, cur_vma, i, j);
+
+			/* Release current parameter */
+			free_params(&params);
 
 			/* Print progress */
 			print_progress("PROFILING", ++pg_count, total_pages);

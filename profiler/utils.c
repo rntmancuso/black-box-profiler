@@ -130,6 +130,31 @@ void free_params(struct profile_params * params)
 	}
 }
 
+void build_profiling_params(struct profile_params * out_profile,
+			    struct vma_descr * vma_targets, unsigned int vma_count,
+			    unsigned int vma_idx, unsigned int page_idx)
+{
+	unsigned int i;
+
+	/* Add all the VMAs. At the end of this loop, all the VMAs
+	 * will be added but with a zero-length list of pages. */
+	for (i = 0; i < vma_count; ++i) {
+		add_vma_descr(&vma_targets[i], &out_profile->vmas, &out_profile->vma_count);
+		out_profile->vmas[i].operation = __page_op;
+
+		if (i == vma_idx) {
+			struct vma_descr * vma = &out_profile->vmas[i];
+			/* We know that the list of pages is empty. So
+			 * just allocate the one entry we need. */
+			vma->page_index = (unsigned int *)malloc(sizeof(unsigned int));
+
+			vma->page_index[0] = page_idx;
+			vma->page_count = 1;
+		}
+	}
+
+}
+
 /* This function is used to build a partial struct profile_params
  * construct where only the most impactful @nr_pages are
  * included. This will then be passed to the lernel. */
