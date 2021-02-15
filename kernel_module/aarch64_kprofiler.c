@@ -36,12 +36,15 @@
 #include <linux/mm.h>
 #include <asm/io.h>
 #include <linux/proc_fs.h>
-//#include <asm/cacheflush.h> /*for processor L1 cache flushing*/
-//#include <asm/outercache.h>
-//#include <asm/hardware/cache-l2x0.h>
+
+#ifdef __arm__
+#include <asm/cacheflush.h> /*for processor L1 cache flushing*/
+#include <asm/outercache.h>
+#include <asm/hardware/cache-l2x0.h>
+#endif
+
 #include <asm/mman.h>
-#include <linux/smp.h>   // for on_each_cpu
-//#include "flush_tlb.c"
+#include <linux/smp.h>   /* for on_each_cpu */
 #include <linux/kallsyms.h>
 #include <linux/genalloc.h>
 
@@ -57,13 +60,16 @@
 /*****************************************************************
  *
  ****************************************************************/
-/* Helper macro to prefix any print statement produced by the host                                                                                           * process. */
-#ifdef _VERBOSE_
-int __verbose_output = 1;
+/* Helper macro to prefix any print statement produced by the host *
+ * process. */
+#ifndef _SILENT_
+int verbose = 0;
+module_param(verbose, int, 0660);
+
 #define DBG_PRINT(format, ...)                                          \
         do {                                                            \
-                if (__verbose_output)                                   \
-                        printk(format, ##__VA_ARGS__);                  \
+		if (verbose)						\
+                        pr_info("[KPROF] " format, ##__VA_ARGS__);	\
         } while (0)
 #else
 #define DBG_PRINT(format, ...)                          \
@@ -76,7 +82,7 @@ int __verbose_output = 1;
 #define MEM_SIZE_HI       0x01f400000UL
 
 #define MEM_START_LO      0x060000000UL
-/* NOTE: we do not actually have up until +0x20000000 because the last                                                                                                                                                                                                                                                        
+/* NOTE: we do not actually have up until +0x20000000 because the last
    0x100000 is not visible/reserved to Linux */
 #define MEM_SIZE_LO       0x01ff00000UL
 
@@ -86,14 +92,21 @@ int __verbose_output = 1;
 static void * __pool_kva_hi;
 static void * __pool_kva_lo;
 
-/* This is just a hack: keep track of the (single) allocated page so                                                                                         * that we can deallocate it upon module cleanup */
+/* This is just a hack: keep track of the (single) allocated page so *
+ * that we can deallocate it upon module cleanup */
 static void ** __allocd_pages = NULL;
 static unsigned int __allocd_count = 0;
 #define MAX_PAGES         1000
 
 struct gen_pool * mem_pool = NULL;
 
-/* The kernel was modified to invoke an implementable function with                                                                                         * the following prototype before returning any page to the per-CPU                                                                                          * page cache (PCP) in free_unref_page_commit. The page should return                                                                                        * 0 if the function was able to correctly return the page to the                                                                                            * custom allocator, and 1 if the page does not belong to the pool and                                                                                       * the normal deallocation route needs to be followed instead. */
+/* The kernel was modified to invoke an implementable function with *
+ * the following prototype before returning any page to the per-CPU *
+ * page cache (PCP) in free_unref_page_commit. The page should return
+ * * 0 if the function was able to correctly return the page to the *
+ * custom allocator, and 1 if the page does not belong to the pool and
+ * * the normal deallocation route needs to be followed instead. */
+
 extern int (*free_pvtpool_page) (struct page *page);
 
 #define PROF_PROCFS_NAME                "memprofile"
@@ -245,7 +258,7 @@ struct page * alloc_pool_page(struct page * page, unsigned long track_page)
 
 	dump_page(virt_to_page(page_va), "pool alloc debug");
 
-	/* If this page is allocated by a profiler and needs to be                                                                                                                                                                                                                                                            
+	/* If this page is allocated by a profiler and needs to be
          * manually reclaimed at module teardown */
 	if (track_page)
 	        __allocd_pages[__allocd_count++] = page_va;
@@ -312,23 +325,6 @@ static int test_process_page(struct task_struct * target, struct Data* data, int
 
 	int i, res;
 
-	/*if (!target)
-	  goto exit;
-
-	  mm = target->mm;
-
-	  // Find the target VMA 
-	  for (vma = mm->mmap, i = 0; vma; vma = vma->vm_next, ++i) {
-	  if (i == vm_target) {
-	  tgt_vma = vma;
-	  break;
-	  }
-	  }
-
-	  if (!tgt_vma)
-	  goto exit;
-
-	  start_addr = tgt_vma->vm_start + (pg_target << PAGE_SHIFT);*/
 	for (i = 0; i < n_page; i++)
 	{
 		start_addr = data->page_addr[i];
@@ -374,7 +370,6 @@ static int cacheability_modifier (pte_t *ptep, unsigned long addr,void *data)
 	size_t pfn;
 	pte_t newpte;
 	struct page *page = NULL;
-	unsigned long phys; /*physical addr*/
 	void *page_v;
 	int skip = cp.vmas[((struct Data*)data)->count_vma].operation;
         struct vm_area_struct * vma = ((struct Data*)data)->vmas;
@@ -382,26 +377,26 @@ static int cacheability_modifier (pte_t *ptep, unsigned long addr,void *data)
         //DBG_PRINT("skip: %d,page_number:%d\n",skip,cp.vmas[((struct Data*)data)->count_vma].page_count);
 
         /*check whether current addr is in the list of pages which we want to skip the operation for*/
-        for (i=0; i< cp.vmas[((struct Data*)data)->count_vma].page_count; i++) 
+        for (i=0; i< cp.vmas[((struct Data*)data)->count_vma].page_count; i++)
 	{
 		if (addr == ((struct Data*)data)->page_addr[i])
 		{
 			skip =!(cp.vmas[((struct Data*)data)->count_vma].operation);
 			break;
-		}  
+		}
 	}
-   
-	if (skip) 
+
+	if (skip)
 	{
 		//DBG_PRINT("we skip (keep cacheable)!, skip is:%d\n",skip);
 	}
-	else 
+	else
 	{
 	        // making new pte
 		pfn = pte_pfn(*pte); //with the old pte
 		page = pte_page(*pte);
 		page_v = kmap(page);
-		
+
 		newpte = pfn_pte(pfn, pgprot_writecombine(vma->vm_page_prot));
 		//flush_cache_mm (((struct Data*)data)->mm);
 		__clean_inval_dcache_area(page_v, PAGE_SIZE);
@@ -415,42 +410,40 @@ static int cacheability_modifier (pte_t *ptep, unsigned long addr,void *data)
                 set_pte_at(((struct Data*)data)->mm, addr, pte, newpte);
 
                 flush_tlb_page(vma, addr);
-		//printk("after flushing\n");
-		
+		//DBG_PRINT("after flushing\n");
 
 #ifdef __arm__
                 //((struct Data*)data)->vmas->vm_page_prot = pgprot_noncached(((struct Data*)data)->vmas->vm_page_prot);
                 //making page struct
-		pfn = pte_pfn(*pte); //with the old pte 
+		pfn = pte_pfn(*pte); //with the old pte
 		page = pte_page(*pte);
-		printk("after page making\n");
+		DBG_PRINT("after page making\n");
 		//phys = page_to_phys(page); //return physical addr, this is needed for invalidate_page_l2
 		page_v = kmap(page);//kmap always returns a kernel virtual address that addresses the desired page
-		//printk("after kmap\n");
+		//DBG_PRINT("after kmap\n");
 		//calculating pfn
 		pfn = pte_pfn(*pte); //with the old pte
 		//making new pte
 		//changing pgprot for changin cacheability here
 		//newpte = pfn_pte(pfn, ((struct Data*)data)->vmas->vm_page_prot);
 		newpte = pfn_pte(pfn, ((struct Data*)data)->vmas->vm_page_prot);
-		//Perform PA-based invaluidation on L1 and L2 
+		//Perform PA-based invaluidation on L1 and L2
 		//invalidate_page_l2(phys);
 		invalidate_page_l1((ulong)page_v);//argument used to be addr
 		invalidate_page_l2(phys);
 		kunmap(page);
-                flush_cache_mm (((struct Data*)data)->mm);   
+                flush_cache_mm (((struct Data*)data)->mm);
 		//setting new pte
 		set_pte_ext(pte, newpte, 0);
 		//flushing TLB for one page
 		// each time addr is added by 4KB
-		printk("cacheability_modifier on cpu: %d\n",smp_processor_id());
+		DBG_PRINT("cacheability_modifier on cpu: %d\n",smp_processor_id());
 		//flush_tlb_page_m(((struct Data*)data)->vmas,addr); //for using this u should activate defining flush_tlb_page_m on top
 		//on_each_cpu(middle_func, &ta, 1);
 		__flush_tlb_page(((struct Data*)data)->vmas,addr);
 #endif
-		
 		}
-       
+
 	return 0;
 }
 
@@ -467,16 +460,17 @@ long faultin_vma(struct task_struct * task, struct vm_area_struct * vma)
         if (vma->vm_flags & VM_LOCKONFAULT)
                 gup_flags &= ~FOLL_POPULATE;
 	/*
-	 *We want to touch writable mappings with a write fault in order 
-	 *to break COW, except for shared mappings because these don't COW 
-	 *and we would not want to dirty them for nothing. 
+	 * We want to touch writable mappings with a write fault in
+	 * order to break COW, except for shared mappings because
+	 * these don't COW and we would not want to dirty them for
+	 * nothing.
 	 */
 	 if ((vma->vm_flags & (VM_WRITE | VM_SHARED)) == VM_WRITE)
                 gup_flags |= FOLL_WRITE;
 
 	 /*
-	  *We want mlock to succeed for regions that have any permissions 
-	  *other than PROT_NONE.
+	  * We want mlock to succeed for regions that have any
+	  * permissions other than PROT_NONE.
 	  */
 	         if (vma->vm_flags & (VM_READ | VM_WRITE | VM_EXEC))
                 gup_flags |= FOLL_FORCE;
@@ -490,26 +484,36 @@ long faultin_vma(struct task_struct * task, struct vm_area_struct * vma)
         return retval;
 }
 
-void which_operation(struct task_struct *task,unsigned long operation, struct Data* data,int page_count)
+void which_operation(struct task_struct *task,unsigned long operation,
+		     struct Data* data,int page_count)
 {
 	int err;
 	struct vm_area_struct  *vma = data->vmas;
 	DBG_PRINT("operation : %ld\n",operation);
-/*all non-cacheable except pages in page_index array-for profiling phase 
-is one page at a time*/
+
+	/* All non-cacheable except pages in page_index array-for
+	   profiling phase is one page at a time*/
 	if (operation == 0){
-		printk("inside operation == 0\n");
+		DBG_PRINT("inside operation == 0\n");
 		apply_to_page_range(vma->vm_mm,vma->vm_start,vma->vm_end - vma->vm_start,cacheability_modifier,data);}
-	if (operation == 1)
+
+	/* All cacheable except pages in page_index array-for
+	   profiling phase is one page at a time */
+	else if (operation == 1)
 	     apply_to_page_range(vma->vm_mm,vma->vm_start,vma->vm_end - vma->vm_start,cacheability_modifier,data);
-	if (operation == 2)
+
+	/* Pages in the page_index array will be selected for
+	 * migration to the private pool */
+	else if (operation == 2)
 	{
-	      printk("before test_process_page\n");
-	      //data was created for extra info for apply_to_page_range(), but is usable here too
+	      DBG_PRINT("before test_process_page\n");
+
+	      /* data was created for extra info for
+	       * apply_to_page_range(), but is usable here too */
 	      test_process_page(task,data,page_count);
-	      printk("before move_pages_to_pvtpool\n");
+	      DBG_PRINT("before move_pages_to_pvtpool\n");
 	      err = move_pages_to_pvtpool(data->mm,page_count,data->page_addr,alloc_pool_page, 0);
-	      printk("Migrating selected pages, ret = %d\n", err);
+	      DBG_PRINT("Migrating selected pages, ret = %d\n", err);
 	      test_process_page(task,data,page_count);
 	}
 }
@@ -520,7 +524,7 @@ void vaddr_maker(struct task_struct *task,struct Data *data)
 	int i = ((struct Data*)data)->count_vma;
          /* Make sure the pages we need are faulted in! (mm_populate) */
          faultin_vma(task, data->vmas);
-	 
+
 	 data->page_addr = kmalloc(cp.vmas[i].page_count*sizeof(int),GFP_KERNEL);
 
          for (j=0; j < cp.vmas[i].page_count; j++)
@@ -529,41 +533,43 @@ void vaddr_maker(struct task_struct *task,struct Data *data)
 	      DBG_PRINT("cp.vmas[%d].page_index[%d]:%d\n",i,j,cp.vmas[i].page_index[j]);
 	   }
 
-	 
+
 }
 
-void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *task) // u can get mm from task, edit it
+/* NOTE: we can get mm from task. There might not be a need to pass it
+ * here explicitly. */
+void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *task) 
 {
 	int i = 0; /*vma_len*/
 	/*for walking on list of vmas of the process sent by user*/
-	int process_vma = 0; 
+	int process_vma = 0;
 	data->mm = mm;
 	data->vmas = mm->mmap;
 	//vma_len = (data->vmas->vm_end - data->vmas->vm_start)/PAGE_SIZE;
 	DBG_PRINT("vma_numbers: %d\n",cp.vma_count);
 	/*for walking on vma arrays (cp.vmas) sent by user*/
-	for (i = 0; i < cp.vma_count ; i++) 
+	for (i = 0; i < cp.vma_count ; i++)
 	{
-                data->count_vma = i; 
-		for (; process_vma < mm->map_count; process_vma++) 
+                data->count_vma = i;
+		for (; process_vma < mm->map_count; process_vma++)
 		{
-			//printk("user's VMA is: %d\n",cp.vmas[i].vma_index);
+			//DBG_PRINT("user's VMA is: %d\n",cp.vmas[i].vma_index);
                         if (cp.vmas[i].vma_index == process_vma)
 			{
-				//printk("cp.vmas[i].vma_index:%d, process_vma:%d\n",cp.vmas[i].vma_index,process_vma);
-				//printk("Len of vma %d is:%d\n",process_vma,(data->vmas->vm_end - data->vmas->vm_start)/PAGE_SIZE);
+				//DBG_PRINT("cp.vmas[i].vma_index:%d, process_vma:%d\n",cp.vmas[i].vma_index,process_vma);
+				//DBG_PRINT("Len of vma %d is:%d\n",process_vma,(data->vmas->vm_end - data->vmas->vm_start)/PAGE_SIZE);
 				/*checking the consistency*/
 				if (cp.vmas[i].total_pages == (data->vmas->vm_end - data->vmas->vm_start)/PAGE_SIZE)
 		        	{
-					// printk("VMA[%d] is: %d and its start: %lx\n",i,cp.vmas[i].vma_index, data->vmas->vm_start);
+					// DBG_PRINT("VMA[%d] is: %d and its start: %lx\n",i,cp.vmas[i].vma_index, data->vmas->vm_start);
 					/*making user virtual adddresses for this VMA*/
 					vaddr_maker(task,data);
-					//printk("after making user vaddr, operation: %d\n",cp.vmas[i].operation);
+					//DBG_PRINT("after making user vaddr, operation: %d\n",cp.vmas[i].operation);
 
                                         /*decide which operation to do*/
 					which_operation(task,cp.vmas[i].operation,data,cp.vmas[i].page_count);       
 
-					kfree(data->page_addr); //correct place? 
+					kfree(data->page_addr); //correct place?
 					data->vmas = data->vmas->vm_next;
 					process_vma++;
 					break;
@@ -572,11 +578,11 @@ void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *ta
 			else
 			{
 				data->vmas = data->vmas->vm_next;
-				printk("VMA %d: not in the list of user's VMA\n", process_vma);
+				DBG_PRINT("VMA %d: not in the list of user's VMA\n", process_vma);
 			}
-	  
+
 		}
-	} 
+	}
 }
 
 
@@ -590,36 +596,40 @@ void get_vma (void)
 	for_each_process(task)
 	{
 		get_task_comm(task_name,task);
-	    
+
 		if(task->pid == cp.pid)
 		{
-			//printk("\n%s[%d]\n", task->comm, task->pid);
+			//DBG_PRINT("\n%s[%d]\n", task->comm, task->pid);
 			mm = task->mm;
 			DBG_PRINT("cp.vmas[0].page_count:%d\n",cp.vmas[0].page_count);
 			DBG_PRINT("cp.vmas[0].vma_index:%d,cp.page_index[0]:%d\n", cp.vmas[0].vma_index,cp.vmas[0].page_index[0]);
-			data->vmas = mm->mmap; 
-			//printk("before vma_finder\n");
+			data->vmas = mm->mmap;
+			//DBG_PRINT("before vma_finder\n");
 			vma_finder(mm,data,task);
 		}
-	
 	}
 	kfree(data);
 }
 
 int filling_params(void)
 {
-	int i,j,z;
+	int i;
 	unsigned int* temp_page_index;
 	struct vma_descr *temp_vmas;
-        
-        /*cp has a field size with useful data and cp.vmas which so far has a user ptr which is useless in kernel
-	 *we don't need to care about this stuff for fields like cp.pid or cp.vma_count which are not array. 
-	 * *Just pointers (arrays)  need allocation in kernel address space(with kmalloc here)*/
-	/* putting user pointer of cp.touched_vmas in a temp var and later use as src in cpy_from_user*/
+
+        /* cp has a field size with useful data and cp.vmas which so
+	 * far has a user ptr which is useless in kernel we don't need
+	 * to care about this stuff for fields like cp.pid or
+	 * cp.vma_count which are not array. Just pointers (arrays)
+	 * need allocation in kernel address space(with kmalloc here)
+	 * putting user pointer of cp.touched_vmas in a temp var and
+	 * later use as src in cpy_from_user*/
 	temp_vmas = cp.vmas;
 	cp.vmas = kmalloc(cp.vma_count*sizeof(struct vma_descr),GFP_KERNEL);
-	/* cp.vmas is a kernel pointer (address) now, can be used as dst in cpy_from_usr 
-	 **and src should be usr pointer (temp_vmas) */
+
+	/* cp.vmas is a kernel pointer (address) now, can be used as
+	 * dst in cpy_from_usr and src should be usr pointer
+	 * (temp_vmas) */
 	if(copy_from_user(cp.vmas,temp_vmas, cp.vma_count*sizeof(struct vma_descr))) return -EFAULT;
 
 	for (i = 0; i < cp.vma_count; i++)
@@ -627,7 +637,7 @@ int filling_params(void)
              temp_page_index = cp.vmas[i].page_index;
 	     cp.vmas[i].page_index = kmalloc(cp.vmas[i].page_count*sizeof(unsigned int),GFP_KERNEL);
 	     if(copy_from_user(cp.vmas[i].page_index,temp_page_index, cp.vmas[i].page_count*sizeof(unsigned int))) return -EFAULT;
-	   
+
 	}
 
 	return 0;
@@ -637,18 +647,17 @@ int filling_params(void)
 ssize_t memprofile_proc_write(struct file *file, const char __user *buffer,
 			      size_t count, loff_t *data)
 {       int i;
-	printk(KERN_ALERT "memprofile_proc_write\n");
+	DBG_PRINT(KERN_ALERT "memprofile_proc_write\n");
 	if(copy_from_user(&cp, buffer, sizeof(struct profile_params))) return -EFAULT;
 	else
 	{
 	  filling_params();
-	  //printk("after filling params\n");
-	  get_vma(); 
+	  get_vma();
 	}
 
 	for(i = 0; i< cp.vma_count; i++)
 	{
-		if (cp.vmas[i].page_count) 
+		if (cp.vmas[i].page_count)
 	             kfree(cp.vmas[i].page_index);
 	}
 	kfree(cp.vmas);
@@ -701,32 +710,32 @@ static int mm_exp_load(void){
 	/*PL310 L2 cache for using those clean,invalidate funcs*/
 	//Setup the I/O memory for the PL310 cache controller
 	pl310_area = ioremap_nocache(HW_PL310_BASE, PAGE_SIZE);
-	printk(KERN_INFO "PL310 area @ 0x%p\n", pl310_area);
+	DBG_PRINT(KERN_INFO "PL310 area @ 0x%p\n", pl310_area);
 
 	if (!pl310_area) {
-		printk(KERN_INFO "Unable to perform ioremap.");
+		pr_err("Unable to perform ioremap.");
 		return 1;
 	}
 #endif
-       
+
 
 	/* Initialize file operations */
 	memprof_ops.write = memprofile_proc_write;
 	memprof_ops.owner = THIS_MODULE;
 
-  
+
 	/* create proc entry */
 	memprofile_proc = proc_create(PROF_PROCFS_NAME, 0666, NULL, &memprof_ops);
 
 	if (memprofile_proc == NULL) {
 		remove_proc_entry(PROF_PROCFS_NAME, NULL);
-		printk(KERN_ALERT "Error: Could not initialize /proc/%s\n", PROF_PROCFS_NAME);
-		return ;
+		pr_err("Error: Could not initialize /proc/%s\n", PROF_PROCFS_NAME);
+		return -ENOMEM;
 	}
 
 
 	/* Now try to remap memory at a known physical address. For both LO and HI range */
-        pr_info("Remapping PRIVATE_LO reserved memory area\n");
+        DBG_PRINT("Remapping PRIVATE_LO reserved memory area\n");
 
         /* Setup pagemap structure to guide memremap_pages operation */
         __pool_kva_lo = memremap(MEM_START_LO, MEM_SIZE_LO, MEMREMAP_WB);
@@ -736,7 +745,7 @@ static int mm_exp_load(void){
                 goto release;
         }
 
-        pr_info("Remapping PRIVATE_LO reserved memory area\n");
+        DBG_PRINT("Remapping PRIVATE_LO reserved memory area\n");
 
         /* Setup pagemap structure to guide memremap_pages operation */
         __pool_kva_hi = memremap(MEM_START_HI, MEM_SIZE_HI, MEMREMAP_WB);
@@ -757,7 +766,7 @@ static int mm_exp_load(void){
         }
 
 
-	/* Allocate space to keep track of allocated pages so that we                                                                                       
+	/* Allocate space to keep track of allocated pages so that we
          * can appropriately cleanup at module teardown. */
         __allocd_pages = (void **)kmalloc(sizeof(void *) * MAX_PAGES, GFP_KERNEL);
         memset(__allocd_pages, 0, sizeof(void *) * MAX_PAGES);
@@ -766,8 +775,11 @@ static int mm_exp_load(void){
         free_pvtpool_page = __my_free_pvtpool_page;
 
 	/* Run a quick sanity check on the existance of page structs
-        * for pool area */
-	// test_page_structs();
+	 * for pool area */
+	if(verbose)
+		test_page_structs();
+
+	pr_info("KPROFILER module installed successfully.\n");
 
 
 	return 0;
@@ -782,7 +794,7 @@ release:
 
 static void mm_exp_unload(void)
 {
-	
+
 #ifdef __arm__
 	//Release PL310 I/O memory area
 	iounmap(pl310_area);
@@ -814,19 +826,13 @@ static void mm_exp_unload(void)
 
         remove_proc_entry(PROF_PROCFS_NAME, NULL);
 
-	
-	pr_info("aarch64  module uninstalled successfully.\n");
-        
-	return; // do we need return here?
+
+	pr_info("KPROFILER module uninstalled successfully.\n");
 }
 
 module_init(mm_exp_load);
 module_exit(mm_exp_unload);
-//module_param(myflag, int, 0);
-//MODULE_LICENSE("GPL");
 
 MODULE_AUTHOR ("Golsana Ghaemi, Renato Mancuso");
 MODULE_DESCRIPTION ("changin cacheability of mmeory regions");
 MODULE_LICENSE("GPL");
-
-
