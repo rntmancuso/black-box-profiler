@@ -88,6 +88,108 @@ void collect_profiling(struct profile * profile, struct trace_params * tparam,
 	page->cycles = tparam->t_end - tparam->t_start;
 }
 
+/* Save an acquired profile to file specified via @filename. */
+void save_profile(char * filename, const struct vma_descr * vma_targets,
+		  const unsigned int vma_count, const struct profile * profile)
+{
+	/* Open file in write/truncate mode */
+	int fd = open(filename, O_WRONLY | O_TRUNC | O_CREAT, 0666);
+	ssize_t pos = 0;
+	unsigned int i;
+
+	if (fd < 0)
+		DBG_ABORT("Unable to write profile to %s.\n", filename);
+
+	/* Write the number of VMAs in this layout */
+	pos += write(fd, (void *)&vma_count, sizeof(unsigned int));
+
+	/* Write out application layout first */
+	for (i = 0; i < vma_count; ++i) {
+		const struct vma_descr * vma = &vma_targets[i];
+		pos += write(fd, (void *)vma, sizeof(struct vma_descr));
+	}
+
+	/* Write out the actual profile (header) */
+	pos += write(fd, (void *)&profile->profile_len, sizeof(unsigned int));
+
+	for (i = 0; i < profile->profile_len; ++i) {
+		const struct profiled_vma * vma = &profile->vmas[i];
+
+		/* Write both vma_index and page_count since they are back-to-back */
+		pos += write(fd, (void *)&vma->vma_index, 2*sizeof(unsigned int));
+
+		if (vma->page_count)
+			pos += write(fd, (void *)vma->pages,
+			      vma->page_count * sizeof(struct profiled_vma_page));
+	}
+
+	DBG_INFO("Profile written to %s. Total size: %ld bytes\n", filename, pos);
+
+	fsync(fd);
+	close(fd);
+}
+
+/* Load an acquired profile from a file specified via @filename. */
+void load_profile(char * filename, struct vma_descr ** vma_targets,
+		  unsigned int * vma_count, struct profile * profile)
+{
+	/* Open file in write/truncate mode */
+	int fd = open(filename, O_RDONLY);
+	ssize_t alloc_size;
+	unsigned int profile_len;
+	unsigned int i;
+
+	if (fd < 0)
+		DBG_ABORT("Unable to read profile from %s.\n", filename);
+
+	/* Read total size that will determine the amount of memory we
+	 * need to allocate to store the application's layout */
+	read(fd, (void *)vma_count, sizeof(unsigned int));
+	alloc_size = *vma_count * sizeof(struct vma_descr);
+
+	DBG_PRINT("Layout contains %d VMAs\n", *vma_count);
+
+	if (alloc_size) {
+		*vma_targets = (struct vma_descr *)malloc(alloc_size);
+		read(fd, (void *)*vma_targets, alloc_size);
+	} else {
+		*vma_targets = NULL;
+	}
+
+	/* Go ahead and read the actual profile */
+	read(fd, (void*)&profile_len, sizeof(unsigned int));
+
+	DBG_PRINT("Profile contains %d VMAs\n", profile_len);
+
+	profile->profile_len = profile_len;
+	profile->vmas = (struct profiled_vma *)malloc(profile_len *
+						      sizeof(struct profiled_vma));
+
+	for (i = 0; i < profile_len; ++i) {
+		struct profiled_vma * vma = &profile->vmas[i];
+		read(fd, (void *)&vma->vma_index, 2 * sizeof(unsigned int));
+
+		DBG_PRINT("\tVMA %d (idx: %d) has %d pages.\n", i,
+			  vma->vma_index, vma->page_count);
+
+		if (vma->page_count) {
+			ssize_t pg_size = vma->page_count * sizeof(struct profiled_vma_page);
+			vma->pages = (struct profiled_vma_page *)malloc(pg_size);
+			read(fd, (void *)vma->pages, pg_size);
+		} else {
+			vma->pages = NULL;
+		}
+	}
+
+	DBG_INFO("Profile read from %s.\n", filename);
+
+	if(__verbose_output)
+		print_profile(profile);
+
+	close(fd);
+}
+
+
 /* Deallocates a profile structure */
 void free_profile(struct profile * profile)
 {

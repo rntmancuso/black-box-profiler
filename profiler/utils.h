@@ -27,6 +27,14 @@ void collect_profiling(struct profile * profile, struct trace_params * tparam,
 void free_profile(struct profile * profile);
 void free_params(struct profile_params * params);
 
+/* Save an acquired profile to file specified via @filename. */
+void save_profile(char * filename, const struct vma_descr * vma_targets,
+		  const unsigned int vma_count, const struct profile * profile);
+
+/* Load an acquired profile from a file specified via @filename. */
+void load_profile(char * filename, struct vma_descr ** vma_targets,
+		  unsigned int * vma_count, struct profile * profile);
+
 /* This function is used to build a struct profile_params where the
  * entire of target VMAs is passed but only 1 page at a time is
  * selected for kernel-side manipulation. */

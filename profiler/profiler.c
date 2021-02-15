@@ -42,6 +42,8 @@ int __verbose_output = 0;
 int __no_kernel = 0;
 int __run_flags = 0;
 enum page_operation __page_op = PAGE_CACHEABLE;
+char * __save_to = NULL;
+char * __load_from = NULL;
 
 /* Send parameters to the kernel module  */
 void send_profile_to_kernel(struct profile_params * params,
@@ -201,7 +203,7 @@ int main(int argc, char* argv[])
 	 * end of the command line after all the optional
 	 * arguments. */
 
-	while((opt = getopt(argc, argv, ":s:c:n:m:hvpq")) != -1) {
+	while((opt = getopt(argc, argv, ":s:c:n:m:hvpqo:i:")) != -1) {
 		switch (opt) {
 		case 'h':
 			DBG_PRINT(HELP_STRING, argv[0]);
@@ -216,6 +218,16 @@ int main(int argc, char* argv[])
 				__page_op = PAGE_MIGRATE;
 			else
 				DBG_ABORT("Unknown mode %s. Exiting.\n", optarg);
+			break;
+		case 'o':
+			/* Output profile to the file specified
+			 * through this paramter */
+			__save_to = optarg;
+			break;
+		case 'i':
+			/* Output profile to the file specified
+			 * through this paramter */
+			__load_from = optarg;
 			break;
 		case 'p':
 			/* In "pretend" mode, do everything except
@@ -297,11 +309,21 @@ int main(int argc, char* argv[])
 	 * and set it to execute with real-time priority. */
 	set_realtime(3, PARENT_CPU);
 
-	/* Let's start by acquiring the application's profile */
-	vma_targets = do_layout_detect(&tparams, &vma_count);
+	if (__load_from) {
+		/* Attempt to read memory layout and profile from file. */
+		load_profile(__load_from, &vma_targets, &vma_count, &profile);
+	} else {
+		/* Let's start by acquiring the application's profile */
+		vma_targets = do_layout_detect(&tparams, &vma_count);
 
-	/* First mode, perform layout scan and per-page profiling */
-	do_profiling(&tparams, &profile, vma_targets, vma_count);
+		/* First mode, perform layout scan and per-page profiling */
+		do_profiling(&tparams, &profile, vma_targets, vma_count);
+
+		/* Do we need to save the profile to file? */
+		if (__save_to) {
+			save_profile(__save_to, vma_targets, vma_count, &profile);
+		}
+	}
 
 	/* Output a pretty print of the profile. */
 	print_profile(&profile);
