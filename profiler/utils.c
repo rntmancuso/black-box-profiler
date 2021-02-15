@@ -359,7 +359,8 @@ void build_incremental_params(const struct profile * in_profile,
 		for (j = 0; j < vma_count; ++j) {
 			if (vma_targets[j].vma_index == out_profile->vmas[i].vma_index) {
 				out_profile->vmas[i].total_pages = vma_targets[j].total_pages;
-				out_profile->vmas[i].operation = vma_targets[j].operation;
+				out_profile->vmas[i].operation = __page_op;
+				//out_profile->vmas[i].operation = vma_targets[j].operation;
 				break;
 			}
 		}
