@@ -12,34 +12,40 @@
 
 #define BUF_SIZE 50*1024 //50KB, each page is 4KB, so first 12 pages of heap are used
 #define BUF2_SIZE 500*1024
-#define get_timing(cycleLo) {						\
-			     asm volatile("mrc p15, 0, %0, c9, c13, 0" : "=r" (cycleLo) ); \
-			     }
+
+#define get_timing(cycles) 				\
+	do {                                            \
+		asm volatile("mrs %0, cntvct_el0"       \
+			: "=r"(cycles));                \
+	} while (0)
+	
 
 
 void loop (char *buf, char *buf2)
 {
-      	for(int i=0; i<500; ++i)
+	unsigned long ts, te;
+	get_timing(ts);
+
+      	for(int i=0; i<1000; ++i)
 	{
-		for(int c=0; c< BUF_SIZE; c+=32)
+		for(int c=0; c< BUF_SIZE; c+=64)
 		{
-			if (c%5 == 0)
-			{
-				buf[c] = c;
-			}
-			buf[c] = i;
+			buf[c] = buf[c] + 1;
 		}
        	}
 
 
-	for (int j=0; j < 200; j++)
+	for (int j=0; j < 100; j++)
 	  {
-	    for (int d = 0; d < BUF2_SIZE; d+=32)
+	    for (int d = 0; d < BUF2_SIZE; d+=64)
 	      {
-		buf2[d] = j;
+		buf2[d] = buf2[d] + 1;
 	      }
 
 	  }
+
+	get_timing(te);
+	printf("Loop took: %lu\n", te-ts);
 
 }
 int main (int argc, char** argv)
@@ -63,7 +69,8 @@ int main (int argc, char** argv)
 	time_start = 0;
 	get_timing(time_start);
 	
-	printf("before loop()\n");
+	printf("before loop() buf = %p, buf2 = %p\n", buf, buf2);
+	//getchar();
 	loop (buf,buf2);
 
 	//do real stuff (writing into heap)
