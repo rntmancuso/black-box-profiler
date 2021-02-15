@@ -49,6 +49,8 @@ void collect_profiling(struct profile * profile, struct trace_params * tparam,
 		       unsigned int vma_idx, unsigned int page_idx)
 {
 	int new_vma = 0;
+	int new_page = 0;
+
 	if (profile->vmas == NULL) {
 		profile->vmas = (struct profiled_vma *)malloc(
 			sizeof(struct profiled_vma));
@@ -77,15 +79,34 @@ void collect_profiling(struct profile * profile, struct trace_params * tparam,
 		cur_entry->page_count = 1;
 		cur_entry->pages = (struct profiled_vma_page *)malloc(
 			sizeof(struct profiled_vma_page));
+		new_page = 1;
 	} else {
-		cur_entry->page_count++;
-		cur_entry->pages = (struct profiled_vma_page *)realloc(cur_entry->pages,
-			cur_entry->page_count * sizeof(struct profiled_vma_page));
+		if (page_idx >= cur_entry->page_count) {
+			cur_entry->page_count++;
+			cur_entry->pages = (struct profiled_vma_page *)
+			    realloc(cur_entry->pages,
+			    cur_entry->page_count * sizeof(struct profiled_vma_page));
+			new_page = 1;
+		}
 	}
 
-	struct profiled_vma_page * page = &cur_entry->pages[cur_entry->page_count-1];
-	page->page_index = page_idx;
-	page->cycles = tparam->t_end - tparam->t_start;
+	struct profiled_vma_page * page = &cur_entry->pages[page_idx];
+
+	if (new_page) {
+		page->page_index = page_idx;
+		page->min_cycles = page->max_cycles = tparam->t_end - tparam->t_start;
+		page->avg_cycles = page->max_cycles;
+	} else {
+		unsigned long cur_cycles = tparam->t_end - tparam->t_start;
+		if (cur_cycles < page->min_cycles)
+			page->min_cycles = cur_cycles;
+		if (cur_cycles > page->max_cycles)
+			page->max_cycles = cur_cycles;
+
+		/* Compute and accumulate running average */
+		page->avg_cycles = ((page->avg_cycles * (profile->num_samples - 1))
+				    + cur_cycles) / profile->num_samples;
+	}
 }
 
 /* Save an acquired profile to file specified via @filename. */
@@ -110,7 +131,7 @@ void save_profile(char * filename, const struct vma_descr * vma_targets,
 	}
 
 	/* Write out the actual profile (header) */
-	pos += write(fd, (void *)&profile->profile_len, sizeof(unsigned int));
+	pos += write(fd, (void *)&profile->profile_len, 2 * sizeof(unsigned int));
 
 	for (i = 0; i < profile->profile_len; ++i) {
 		const struct profiled_vma * vma = &profile->vmas[i];
@@ -157,11 +178,12 @@ void load_profile(char * filename, struct vma_descr ** vma_targets,
 	}
 
 	/* Go ahead and read the actual profile */
-	read(fd, (void*)&profile_len, sizeof(unsigned int));
+	read(fd, (void*)&profile->profile_len, 2 * sizeof(unsigned int));
+
+	profile_len = profile->profile_len;
 
 	DBG_PRINT("Profile contains %d VMAs\n", profile_len);
 
-	profile->profile_len = profile_len;
 	profile->vmas = (struct profiled_vma *)malloc(profile_len *
 						      sizeof(struct profiled_vma));
 
@@ -293,20 +315,20 @@ void build_incremental_params(const struct profile * in_profile,
 	 * keeping track of the global min and select/add one page at
 	 * a time. */
 	for (i = 0; i < nr_pages; ++i) {
-		unsigned long min_cycles = ~(0UL);
+		unsigned long min_max_cycles = ~(0UL);
 		int min_vma;
 		for (j = 0; j < in_len; ++j) {
 			struct profiled_vma * in_vma = &in_profile->vmas[j];
 			if (__page_ind[j] < in_vma->page_count) {
 				struct profiled_vma_page * in_page = &in_vma->pages[__page_ind[j]];
 				if (__page_op == PAGE_CACHEABLE &&
-				    in_page->cycles < min_cycles) {
+				    in_page->max_cycles < min_max_cycles) {
 					min_vma = j;
-					min_cycles = in_page->cycles;
+					min_max_cycles = in_page->max_cycles;
 				} else if (__page_op == PAGE_NONCACHEABLE &&
-					   LONG_MAX - in_page->cycles < min_cycles) {
+					   LONG_MAX - in_page->max_cycles < min_max_cycles) {
 					min_vma = j;
-					min_cycles = LONG_MAX - in_page->cycles;
+					min_max_cycles = LONG_MAX - in_page->max_cycles;
 				}
 			}
 		}
@@ -365,7 +387,8 @@ void print_profile(struct profile * profile)
 {
 	unsigned int i, j;
 	unsigned int len = profile->profile_len;
-	        DBG_INFO("\n----------------- PROFILE -----------------\n");
+	DBG_INFO("\n----------------- PROFILE (%d samples) -----------------\n",
+		profile->num_samples);
 	for (i = 0; i < len; ++i) {
 		struct profiled_vma cur_vma = profile->vmas[i];
 		DBG_INFO("========== (%d/%d) VMA index: %d ==========\n",
@@ -373,8 +396,9 @@ void print_profile(struct profile * profile)
 
 		for (j = 0; j < cur_vma.page_count; ++j) {
 			struct profiled_vma_page cur_page = cur_vma.pages[j];
-			DBG_INFO("PAGE: 0x%04x\t\tCYCLES: %ld\n",
-				          cur_page.page_index, cur_page.cycles);
+			DBG_INFO("PAGE: 0x%04x\tCYCLES: max: %ld\tmin: %ld\tavg: %lf\n",
+				 cur_page.page_index, cur_page.max_cycles,
+				 cur_page.min_cycles, cur_page.avg_cycles);
 		}
 	}
 	DBG_INFO("\n-------------------------------------------\n");
@@ -457,13 +481,13 @@ void set_realtime(int prio, int cpu)
 int profiled_vma_page_cmp (const void * a, const void * b) {
 	if (__page_op == PAGE_CACHEABLE) {
 		return (
-			((struct profiled_vma_page*)a)->cycles -
-			((struct profiled_vma_page*)b)->cycles
+			((struct profiled_vma_page*)a)->max_cycles -
+			((struct profiled_vma_page*)b)->max_cycles
 			);
 	} else {
 		return (
-			((struct profiled_vma_page*)b)->cycles -
-			((struct profiled_vma_page*)a)->cycles
+			((struct profiled_vma_page*)b)->max_cycles -
+			((struct profiled_vma_page*)a)->max_cycles
 			);
 	}
 }

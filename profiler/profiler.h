@@ -153,7 +153,9 @@ struct vma_struct {
 
 struct profiled_vma_page {
 	int page_index;
-	unsigned long cycles;
+	unsigned long min_cycles;
+	unsigned long max_cycles;
+	double avg_cycles;
 };
 
 /*structure for keeping output of profiling mode-not relatedd to kernel*/
@@ -165,6 +167,7 @@ struct profiled_vma {
 
 struct profile {
 	unsigned int profile_len;
+	unsigned int num_samples;
 	struct profiled_vma * vmas;
 };
 

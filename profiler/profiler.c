@@ -100,12 +100,12 @@ struct vma_descr * do_layout_detect(struct trace_params * tparams,
  * application. Per-page timing results are accumulated in the @output
  * array. */
 void do_profiling(struct trace_params * tparams, struct profile * profile,
-		  struct vma_descr * vma_targets, unsigned int vma_count)
+		  struct vma_descr * vma_targets, unsigned int vma_count,
+		  int skip_first)
 {
 	struct profile_params params;
 	int res;
 	unsigned i, j;
-	int skip_first = 1;
 	int total_pages = get_total_pages(vma_targets, vma_count);
 	int pg_count = 0;
 
@@ -113,8 +113,8 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 	memset(&params, 0, sizeof(struct profile_params));
 	params.pid = tparams->pid;
 
-	/* Make sure we start with a clean profile */
-	memset(profile, 0, sizeof(struct profile));
+	/* Record that a new sample has been added to the profile */
+	profile->num_samples++;
 
 	/* Okay, we have the VMAs to work with. Let's loop over each
 	 * VMA and each page to profile the behavior of the task when
@@ -313,16 +313,20 @@ int main(int argc, char* argv[])
 		/* Attempt to read memory layout and profile from file. */
 		load_profile(__load_from, &vma_targets, &vma_count, &profile);
 	} else {
+		/* Make sure we start with a clean profile */
+		memset(&profile, 0, sizeof(struct profile));
+
 		/* Let's start by acquiring the application's profile */
 		vma_targets = do_layout_detect(&tparams, &vma_count);
+	}
 
-		/* First mode, perform layout scan and per-page profiling */
-		do_profiling(&tparams, &profile, vma_targets, vma_count);
 
-		/* Do we need to save the profile to file? */
-		if (__save_to) {
-			save_profile(__save_to, vma_targets, vma_count, &profile);
-		}
+	/* First mode, perform layout scan and per-page profiling */
+	do_profiling(&tparams, &profile, vma_targets, vma_count, __load_from == NULL);
+
+	/* Do we need to save the profile to file? */
+	if (__save_to) {
+		save_profile(__save_to, vma_targets, vma_count, &profile);
 	}
 
 	/* Output a pretty print of the profile. */
