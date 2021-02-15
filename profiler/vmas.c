@@ -140,7 +140,7 @@ static void vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
 {
 	/* We assume that vma numbers are in increasing order */
 	static int get_anon = 1;
-	static int get_text = 1;
+	static int get_text = 0;
 
 	int get_heap = 1;
 	int get_stack = 0;
