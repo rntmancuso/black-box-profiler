@@ -41,6 +41,7 @@
 int __verbose_output = 0;
 int __no_kernel = 0;
 int __run_flags = 0;
+int __do_ranking = 0;
 enum page_operation __page_op = PAGE_CACHEABLE;
 char * __save_to = NULL;
 char * __load_from = NULL;
@@ -164,6 +165,8 @@ void do_ranking(struct trace_params * tparams, struct profile * profile,
 	int total_pages = get_total_pages(vma_targets, vma_count);
 	struct profile_params incr_profile;
 	int i, res;
+	unsigned long * incr_timing = (void *)malloc(total_pages *
+						     sizeof(unsigned long));
 
 	for (i = 0; i < total_pages; ++i) {
 		/* Generate new incremental profile */
@@ -182,8 +185,16 @@ void do_ranking(struct trace_params * tparams, struct profile * profile,
 		/* Print progress */
 		print_progress("RANKING", i+1, total_pages);
 
-		/* TODO: gather timing results from run with incremental profile */
+		incr_timing[i] = tparams->t_end - tparams->t_start;
 	}
+
+	/* Printout timing results */
+	DBG_INFO("\nRANKED TIMING:\n");
+	for (i = 0; i < total_pages; ++i) {
+		DBG_INFO("%d, %ld\n", i+1, incr_timing[i]);
+	}
+
+	free(incr_timing);
 }
 
 int main(int argc, char* argv[])
@@ -218,6 +229,10 @@ int main(int argc, char* argv[])
 				__page_op = PAGE_MIGRATE;
 			else
 				DBG_ABORT("Unknown mode %s. Exiting.\n", optarg);
+			break;
+		case 'r':
+			/* Perform ranking after profiling */
+			__do_ranking = 1;
 			break;
 		case 'o':
 			/* Output profile to the file specified
@@ -333,7 +348,8 @@ int main(int argc, char* argv[])
 	print_profile(&profile);
 
 	/* Now perform full page ranking */
-	//do_ranking(&tparams, &profile, vma_targets, vma_count);
+	if (__do_ranking)
+		do_ranking(&tparams, &profile, vma_targets, vma_count);
 
 	return EXIT_SUCCESS;
 }
