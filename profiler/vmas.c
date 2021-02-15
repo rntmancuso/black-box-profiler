@@ -50,13 +50,10 @@ int get_total_pages(struct vma_descr * vma_targets, unsigned int vma_count)
 	return retval;
 }
 
-/* Add a new page/vma pair in the set of parameters that willl be
- * passed to the kernel. */
-void params_add_page(struct profile_params * params, struct profiled_vma * vma,
-		     struct profiled_vma_page * page)
+
+struct vma_descr * params_get_vma(struct profile_params * params,
+					 struct profiled_vma * vma)
 {
-	/* First off, let's figure out if a VMA with the same index
-	 * already exists */
 	unsigned int i;
 	struct vma_descr * out_vma = NULL;
 
@@ -74,6 +71,19 @@ void params_add_page(struct profile_params * params, struct profiled_vma * vma,
 		tmp_vma.page_count = vma->page_count;
 		out_vma = add_vma_descr(&tmp_vma, &params->vmas, &params->vma_count);
 	}
+
+	return out_vma;
+}
+
+/* Add a new page/vma pair in the set of parameters that willl be
+ * passed to the kernel. */
+void params_add_page(struct profile_params * params, struct profiled_vma * vma,
+		     struct profiled_vma_page * page)
+{
+	/* First off, let's figure out if a VMA with the same index
+	 * already exists */
+	unsigned int i;
+	struct vma_descr * out_vma = params_get_vma(params, vma);
 
 	/* Here we know for sure that out_vma points to a valid VMA to
 	 * which we will add the new page. */

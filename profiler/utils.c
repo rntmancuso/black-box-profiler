@@ -319,6 +319,9 @@ void build_incremental_params(const struct profile * in_profile,
 		int min_vma;
 		for (j = 0; j < in_len; ++j) {
 			struct profiled_vma * in_vma = &in_profile->vmas[j];
+			/* Make sure that the VMA exists in the profile */
+			params_get_vma(out_profile, in_vma);
+
 			if (__page_ind[j] < in_vma->page_count) {
 				struct profiled_vma_page * in_page = &in_vma->pages[__page_ind[j]];
 				if (__page_op == PAGE_CACHEABLE &&

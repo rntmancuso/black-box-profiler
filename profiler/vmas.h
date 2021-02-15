@@ -21,6 +21,9 @@
 /* Returns the total number of pages in the selected VMA targets */
 int get_total_pages(struct vma_descr * vma_targets, unsigned int vma_count);
 
+struct vma_descr * params_get_vma(struct profile_params * params,
+				  struct profiled_vma * vma);
+
 /* Add a new page/vma pair in the set of parameters that willl be
  * passed to the kernel. */
 void params_add_page(struct profile_params * params, struct profiled_vma * vma,
