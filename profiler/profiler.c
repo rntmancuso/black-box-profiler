@@ -214,7 +214,7 @@ int main(int argc, char* argv[])
 	 * end of the command line after all the optional
 	 * arguments. */
 
-	while((opt = getopt(argc, argv, ":s:c:n:m:hvpqo:i:")) != -1) {
+	while((opt = getopt(argc, argv, ":s:c:n:m:hvpqo:i:r")) != -1) {
 		switch (opt) {
 		case 'h':
 			DBG_PRINT(HELP_STRING, argv[0]);
