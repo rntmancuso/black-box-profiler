@@ -111,7 +111,7 @@ void collect_profiling(struct profile * profile, struct trace_params * tparam,
 
 /* Save an acquired profile to file specified via @filename. */
 void save_profile(char * filename, const struct vma_descr * vma_targets,
-		  const unsigned int vma_count, const struct profile * profile)
+		  const unsigned int vma_count, struct profile * profile)
 {
 	/* Open file in write/truncate mode */
 	int fd = open(filename, O_WRONLY | O_TRUNC | O_CREAT, 0666);
@@ -120,6 +120,9 @@ void save_profile(char * filename, const struct vma_descr * vma_targets,
 
 	if (fd < 0)
 		DBG_ABORT("Unable to write profile to %s.\n", filename);
+
+	/* Make sure that the profile is sorted by page index! */
+	sort_profile_by_idx(profile);
 
 	/* Write the number of VMAs in this layout */
 	pos += write(fd, (void *)&vma_count, sizeof(unsigned int));
@@ -131,10 +134,10 @@ void save_profile(char * filename, const struct vma_descr * vma_targets,
 	}
 
 	/* Write out the actual profile (header) */
-	pos += write(fd, (void *)&profile->profile_len, 2 * sizeof(unsigned int));
+	pos += write(fd, (void *)&profile->profile_len, 3 * sizeof(unsigned int));
 
 	for (i = 0; i < profile->profile_len; ++i) {
-		const struct profiled_vma * vma = &profile->vmas[i];
+		struct profiled_vma * vma = &profile->vmas[i];
 
 		/* Write both vma_index and page_count since they are back-to-back */
 		pos += write(fd, (void *)&vma->vma_index, 2*sizeof(unsigned int));
@@ -178,7 +181,7 @@ void load_profile(char * filename, struct vma_descr ** vma_targets,
 	}
 
 	/* Go ahead and read the actual profile */
-	read(fd, (void*)&profile->profile_len, 2 * sizeof(unsigned int));
+	read(fd, (void*)&profile->profile_len, 3 * sizeof(unsigned int));
 
 	profile_len = profile->profile_len;
 
@@ -393,6 +396,9 @@ void print_profile(struct profile * profile)
 	unsigned int len = profile->profile_len;
 	DBG_INFO("\n----------------- PROFILE (%d samples) -----------------\n",
 		profile->num_samples);
+
+	DBG_INFO("heap_pad = %d\n", profile->heap_pad);
+
 	for (i = 0; i < len; ++i) {
 		struct profiled_vma cur_vma = profile->vmas[i];
 		DBG_INFO("========== (%d/%d) VMA index: %d ==========\n",
@@ -481,8 +487,8 @@ void set_realtime(int prio, int cpu)
 
 }
 
-/* Compare function for qsort */
-int profiled_vma_page_cmp (const void * a, const void * b) {
+/* Compare function for qsort --- sort by page stats */
+static int profiled_vma_page_stats_cmp (const void * a, const void * b) {
 	if (__page_op == PAGE_CACHEABLE) {
 		return (
 			((struct profiled_vma_page*)a)->max_cycles -
@@ -494,6 +500,14 @@ int profiled_vma_page_cmp (const void * a, const void * b) {
 			((struct profiled_vma_page*)a)->max_cycles
 			);
 	}
+}
+
+/* Compare function for qsort --- sort by page index */
+static int profiled_vma_page_idx_cmp (const void * a, const void * b) {
+	return (
+		((struct profiled_vma_page*)a)->page_index -
+		((struct profiled_vma_page*)b)->page_index
+		);
 }
 
 /* Get the value of the link register value. LR keeps the return
@@ -718,7 +732,8 @@ err_close:
 /* Executes tracee program. Returns 0 upon error. Won't return if
  * successful in the child, but will return the PID of the spawned
  * child process in the parent. */
-static pid_t run_debuggee(char * program_name, char * arguments [], unsigned int run_flags)
+static pid_t run_debuggee(char * program_name, char * arguments [],
+			  struct trace_params * tparams)
 {
 	/* First, attempt a fork to spawn a child process */
 	pid_t child_pid = fork();
@@ -727,9 +742,17 @@ static pid_t run_debuggee(char * program_name, char * arguments [], unsigned int
 	 * successful fork */
 	if(child_pid == 0)
 	{
-	        set_realtime(2, CHILD_CPU);
+		if (tparams->run_flags & RUN_SET_MALLOC) {
+			char pad_buf [16];
 
-		//setenv("MALLOC_TOP_PAD_", "1400000", 1);
+			sprintf(pad_buf, "%ld", tparams->vm_peak * 1024);
+
+			DBG_PRINT("NOTE: setting MALLOC_TOP_PAD_ to %s.\n", pad_buf);
+			setenv("MALLOC_TOP_PAD_", pad_buf, 1);
+			setenv("MALLOC_MMAP_MAX_", "0", 1);
+		}
+
+		set_realtime(2, CHILD_CPU);
 
 		/* Allow tracing of this process */
 		if (ptrace(PTRACE_TRACEME, 0, 0, 0) < 0)
@@ -744,9 +767,10 @@ static pid_t run_debuggee(char * program_name, char * arguments [], unsigned int
 			DBG_ABORT("Unable to detect the current CPU\n");
 		}
 
-		DBG_PRINT("Executing tracee on CPU %d\n", cpu);
+		DBG_PRINT("Executing tracee on CPU %d (flags = 0x%x)\n",
+			  cpu, tparams->run_flags);
 
-		if (run_flags & RUN_QUIET) {
+		if (tparams->run_flags & RUN_QUIET) {
 			/* Suppress the stderr and stdout of the
 			 * tracee */
 			static int null_fd = -1;
@@ -890,13 +914,13 @@ static void continue_until_end(struct trace_params * tparams)
 }
 
 /* Run the debuggee until we hit the break-point */
-int run_to_symbol(struct trace_params * tparams, unsigned int run_flags)
+int run_to_symbol(struct trace_params * tparams)
 {
 	sigset_t waitmask;
 	siginfo_t info;
 	int wstat;
 
-	tparams->pid = run_debuggee(tparams->exe_name, tparams->exe_params, run_flags);
+	tparams->pid = run_debuggee(tparams->exe_name, tparams->exe_params, tparams);
 	/* The first signal we expect is when the process begins
 	 * execution */
 
@@ -952,16 +976,16 @@ static void handle_tracee_timeout(struct trace_params * tparams)
 		  WSTOPSIG(wstat), sys_siglist[WSTOPSIG(wstat)]);
 }
 
-/* Run the debuggee until we hit the break-point */
-int run_to_completion(struct trace_params * tparams)
+/* Run the debuggee until we hit the return instruction from the
+ * observed function */
+int run_to_return(struct trace_params * tparams)
 {
 	sigset_t waitmask;
 	siginfo_t info;
 	int wstat, res;
-	unsigned long stopped_at;
 
 	struct timespec timeout = {
-		.tv_sec = 5,         /* seconds */
+		.tv_sec = 60,         /* seconds */
 		.tv_nsec = 0,        /* nanoseconds */
 	};
 
@@ -988,7 +1012,21 @@ int run_to_completion(struct trace_params * tparams)
 		return -1;
 	}
 
+	return 0;
+}
+
+/* Run the debuggee until we reach the end of execution */
+int run_to_exit(struct trace_params * tparams)
+{
+	sigset_t waitmask;
+	siginfo_t info;
+	int wstat;
+	unsigned long stopped_at;
+
 	continue_until_end(tparams);
+
+	/* Wait for signals from the child */
+	sigaddset(&waitmask, SIGCHLD);
 
 	/* The second signal we expect is when the process exits */
 	sigwaitinfo(&waitmask, &info);
@@ -1012,7 +1050,17 @@ int run_to_completion(struct trace_params * tparams)
 	return 0;
 }
 
+/* Run the debuggee from the breakpoint until the end */
+int run_to_completion(struct trace_params * tparams)
+{
+	int retval = run_to_return(tparams);
 
+	if (retval)
+		return retval;
+
+	retval = run_to_exit(tparams);
+	return retval;
+}
 
 /* This function sets up signal handling in the parent so that we can
  * use synchronous handling for anything generated by the
@@ -1060,4 +1108,26 @@ void print_progress(const char * prefix, size_t count, size_t max)
 	}
 	fflush(stdout);
 	free(buffer);
+}
+
+/* Sort all the VMAs in the profile by cycles statistics */
+void sort_profile_by_stats(struct profile * profile) {
+	unsigned int i;
+
+	for (i = 0; i < profile->profile_len; ++i) {
+		/* Sort the profile of the current VMA */
+		qsort(profile->vmas[i].pages, profile->vmas[i].page_count,
+		      sizeof(struct profiled_vma_page), profiled_vma_page_stats_cmp);
+	}
+}
+
+/* Sort all the VMAs in the profile by page index */
+void sort_profile_by_idx(struct profile * profile) {
+	unsigned int i;
+
+	for (i = 0; i < profile->profile_len; ++i) {
+		/* Sort the profile of the current VMA */
+		qsort(profile->vmas[i].pages, profile->vmas[i].page_count,
+		      sizeof(struct profiled_vma_page), profiled_vma_page_idx_cmp);
+	}
 }

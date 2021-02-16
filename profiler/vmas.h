@@ -42,4 +42,7 @@ void add_vma(struct vma_struct *vma, struct vma_descr ** vmas,
 int select_vmas(struct trace_params * tparams,
 		struct vma_descr ** vmas, unsigned int * vma_count);
 
+/* Find out the maximum VM size of the application. */
+int detect_vmpeak(struct trace_params * tparams);
+
 #endif

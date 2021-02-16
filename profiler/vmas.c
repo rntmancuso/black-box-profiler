@@ -82,7 +82,6 @@ void params_add_page(struct profile_params * params, struct profiled_vma * vma,
 {
 	/* First off, let's figure out if a VMA with the same index
 	 * already exists */
-	unsigned int i;
 	struct vma_descr * out_vma = params_get_vma(params, vma);
 
 	/* Here we know for sure that out_vma points to a valid VMA to
@@ -145,7 +144,7 @@ void add_vma(struct vma_struct *vma, struct vma_descr ** vmas,
 	new_vma->page_index = NULL;
 }
 
-static void vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
+static int vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
 			     unsigned int * vma_count)
 {
 	/* We assume that vma numbers are in increasing order */
@@ -159,23 +158,29 @@ static void vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
 	{
 		get_anon = 0;
 		add_vma(vma, vmas, vma_count);
+		return 1;
 	}
 
 	else if (get_heap && (strcmp(vma->mappedfile,"[heap]")) == 0)
 	{
 		add_vma(vma, vmas, vma_count);
+		return 1;
 	}
 
 	else if  (vma->executable && get_text)
 	{
 		get_text = 0;
 		add_vma(vma, vmas, vma_count);
+		return 1;
 	}
 
 	else if (get_stack && (strcmp(vma->mappedfile,"[stack]")) == 0)
 	{
 		add_vma(vma, vmas, vma_count);
+		return 1;
 	}
+
+	return 0;
 }
 
 static struct vma_struct * scan_proc_maps_line(int chunk_id, char const *buf)
@@ -262,6 +267,8 @@ static void read_proc_maps_file(pid_t pid, struct vma_descr ** vmas,
 	*vma_count = 0;
 
 	for(;;) {
+		int added;
+
 		if (fgets(buf, 256, f) == NULL)
 		{
 			if(feof(f))
@@ -274,12 +281,14 @@ static void read_proc_maps_file(pid_t pid, struct vma_descr ** vmas,
 		buf[255] = '\0';
 		buf[strlen(buf)-1] = '\0';
 
-		DBG_PRINT("%s\n", buf);
-
 		vma = scan_proc_maps_line(nvma, buf);
 
 		/* for finding vma indices and size of each vma */
-		vma_index_finder(vma, vmas, vma_count);
+		added = vma_index_finder(vma, vmas, vma_count);
+
+		if(__verbose_output || __print_layout) {
+			DBG_INFO("%c  %s\n", (added?'*':' '),buf);
+		}
 
 		free(vma);
 
@@ -296,7 +305,7 @@ int select_vmas(struct trace_params * tparams,
 	int res;
 
 	/* First off, run the target process until the breakpoint */
-	res = run_to_symbol(tparams, __run_flags);
+	res = run_to_symbol(tparams);
 
 	if (res) {
 		DBG_FATAL("Unable to run child until [%s]. Exiting.\n", tparams->symbol);
@@ -317,4 +326,58 @@ int select_vmas(struct trace_params * tparams,
 	}
 
 	return 0;
+}
+
+/* Find out the maximum VM size of the application. */
+int detect_vmpeak(struct trace_params * tparams)
+{
+	int retval;
+	char buf[256];
+	char path[100];
+	tparams->vm_peak = 0;
+
+	retval = run_to_return(tparams);
+
+	if (retval)
+		return retval;
+
+	/* We have just completed the function under
+	 * observation. Let's retrieve the max VM size */
+	sprintf(path,"/proc/%d/status", tparams->pid);
+
+	FILE *f = fopen(path, "r");
+	if (f == NULL) {
+		DBG_ABORT("Unable to open file %s", path);
+	}
+
+	for(;;) {
+		if (fgets(buf, 256, f) == NULL)
+		{
+			if(feof(f))
+				break;
+
+		        DBG_ABORT("Error reading %s status file.\n", path);
+		}
+
+		/* Make sure buffer is zero-terminated. */
+		buf[255] = '\0';
+		buf[strlen(buf)-1] = '\0';
+
+		if (strncmp("RssAnon:", buf, 8) == 0) {
+			tparams->vm_peak = strtol(buf+8, NULL, 10);
+			DBG_PRINT("RssAnon: %ld\n", tparams->vm_peak);
+			break;
+		}
+	}
+
+	fclose(f);
+
+	if (!tparams->vm_peak)
+		DBG_ABORT("Unable to determine peak VM size. Exiting.\n");
+
+	retval = run_to_exit(tparams);
+
+	tparams->run_flags |= RUN_SET_MALLOC;
+
+	return retval;
 }

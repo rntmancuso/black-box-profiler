@@ -42,6 +42,7 @@ int __verbose_output = 0;
 int __no_kernel = 0;
 int __run_flags = 0;
 int __do_ranking = 0;
+int __print_layout = 0;
 enum page_operation __page_op = PAGE_CACHEABLE;
 char * __save_to = NULL;
 char * __load_from = NULL;
@@ -86,9 +87,13 @@ struct vma_descr * do_layout_detect(struct trace_params * tparams,
 	struct vma_descr * vma_targets = NULL;
 	int res;
 
+	res = run_to_symbol(tparams);
+	res = detect_vmpeak(tparams);
+
 	/* Now run the task until the breakpoint and select the VMAs
 	 * that will be used for profiling */
 	res = select_vmas(tparams, &vma_targets, count);
+	res = run_to_completion(tparams);
 
 	if (res) {
 		DBG_ABORT("VMA selection failed. Exiting.\n");
@@ -100,22 +105,17 @@ struct vma_descr * do_layout_detect(struct trace_params * tparams,
 /* Perform page-by-page timing analysis of the target
  * application. Per-page timing results are accumulated in the @output
  * array. */
-void do_profiling(struct trace_params * tparams, struct profile * profile,
-		  struct vma_descr * vma_targets, unsigned int vma_count,
-		  int skip_first)
+static void __do_profiling(struct trace_params * tparams, struct profile * profile,
+			   struct vma_descr * vma_targets, unsigned int vma_count,
+			   int total_pages)
 {
 	struct profile_params params;
 	int res;
-	unsigned i, j;
-	int total_pages = get_total_pages(vma_targets, vma_count);
+	unsigned int i, j;
 	int pg_count = 0;
 
 	/* Setup the parameters that we will pass to the kernel */
 	memset(&params, 0, sizeof(struct profile_params));
-	params.pid = tparams->pid;
-
-	/* Record that a new sample has been added to the profile */
-	profile->num_samples++;
 
 	/* Okay, we have the VMAs to work with. Let's loop over each
 	 * VMA and each page to profile the behavior of the task when
@@ -130,10 +130,7 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 
 			/* Remember that the debugee is currently at
 			 * the breakpoint the first time we do this */
-			if (!skip_first)
-				res = run_to_symbol(tparams, __run_flags);
-			else
-				skip_first = 0;
+			res = run_to_symbol(tparams);
 
 			/* Perform interact with the kernel */
 			send_profile_to_kernel(&params, tparams);
@@ -152,10 +149,27 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 			/* Print progress */
 			print_progress("PROFILING", ++pg_count, total_pages);
 		}
+	}
+}
 
-		/* Sort the profile of the current VMA */
-		qsort(profile->vmas[i].pages, profile->vmas[i].page_count,
-		      sizeof(struct profiled_vma_page), profiled_vma_page_cmp);
+/* Perform page-by-page timing analysis of the target
+ * application. Per-page timing results are accumulated in the @output
+ * array. */
+void do_profiling(struct trace_params * tparams, struct profile * profile,
+		  struct vma_descr * vma_targets, unsigned int vma_count,
+		  int sample_count)
+{
+	int res;
+	int s;
+	int total_pages = get_total_pages(vma_targets, vma_count);
+
+	for (s = 0; s < sample_count; ++s) {
+		DBG_INFO("PROFILING: Collecting sample %d of %d\n", s+1, sample_count);
+
+		/* Record that a new sample has been added to the profile */
+		profile->num_samples++;
+
+		__do_profiling(tparams, profile, vma_targets, vma_count, total_pages);
 	}
 }
 
@@ -168,12 +182,15 @@ void do_ranking(struct trace_params * tparams, struct profile * profile,
 	unsigned long * incr_timing = (void *)malloc(total_pages *
 						     sizeof(unsigned long));
 
+	/* Make sure that the profile is sorted by page statistics! */
+	sort_profile_by_stats(profile);
+
 	for (i = 0; i < total_pages; ++i) {
 		/* Generate new incremental profile */
 		build_incremental_params(profile, &incr_profile,
 					 vma_targets, vma_count, i);
 
-		res = run_to_symbol(tparams, __run_flags);
+		res = run_to_symbol(tparams);
 
 		/* Perform interact with the kernel */
 		send_profile_to_kernel(&incr_profile, tparams);
@@ -199,7 +216,7 @@ void do_ranking(struct trace_params * tparams, struct profile * profile,
 
 int main(int argc, char* argv[])
 {
-	int opt, i, tracee_cmd_idx, sample_size;
+	int opt, i, tracee_cmd_idx, __addl_sample_count = 1;
 	struct trace_params tparams;
 	struct vma_descr * vma_targets;
 	unsigned int vma_count;
@@ -214,7 +231,7 @@ int main(int argc, char* argv[])
 	 * end of the command line after all the optional
 	 * arguments. */
 
-	while((opt = getopt(argc, argv, ":s:c:n:m:hvpqo:i:r")) != -1) {
+	while((opt = getopt(argc, argv, ":s:c:n:m:hvpqo:i:rl")) != -1) {
 		switch (opt) {
 		case 'h':
 			DBG_PRINT(HELP_STRING, argv[0]);
@@ -229,6 +246,10 @@ int main(int argc, char* argv[])
 				__page_op = PAGE_MIGRATE;
 			else
 				DBG_ABORT("Unknown mode %s. Exiting.\n", optarg);
+			break;
+		case 'l':
+			/* Perform ranking after profiling */
+			__print_layout = 1;
 			break;
 		case 'r':
 			/* Perform ranking after profiling */
@@ -259,7 +280,7 @@ int main(int argc, char* argv[])
 			__verbose_output = 1;
 			break;
 		case 'n': //number of samples
-			sample_size = strtol(optarg, NULL, 0);
+			__addl_sample_count = strtol(optarg, NULL, 0);
 			break;
 		case 'c': //cacheabe : c = 1, noncacheable : c = 0
 			operation = strtol(optarg, NULL, 0);
@@ -314,6 +335,9 @@ int main(int argc, char* argv[])
 		return EXIT_FAILURE;
 	}
 
+	/* Pass run flags, if any. */
+	tparams.run_flags = __run_flags;
+
 	/* We are ready to launch the process to be profiled to learn
 	 * about its layout and identify the VMAs we will work
 	 * with. But before we do the first launch, setup the signal
@@ -327,17 +351,32 @@ int main(int argc, char* argv[])
 	if (__load_from) {
 		/* Attempt to read memory layout and profile from file. */
 		load_profile(__load_from, &vma_targets, &vma_count, &profile);
+
+		/* If we load a profile from file, we will be skipping
+		 * layout detection. Hence, make sure we initialize
+		 * flags as needed. */
+		tparams.vm_peak = profile.heap_pad;
+		tparams.run_flags |= RUN_SET_MALLOC;
 	} else {
 		/* Make sure we start with a clean profile */
 		memset(&profile, 0, sizeof(struct profile));
 
 		/* Let's start by acquiring the application's profile */
 		vma_targets = do_layout_detect(&tparams, &vma_count);
+
+		/* Make sure we record any adjustment to the run
+		 * parameters determined during layout detection .*/
+		profile.heap_pad = tparams.vm_peak;
 	}
 
 
-	/* First mode, perform layout scan and per-page profiling */
-	do_profiling(&tparams, &profile, vma_targets, vma_count, __load_from == NULL);
+	/* How many samples on top of what we read from file we need
+	 * to acquire? */
+	if (__addl_sample_count > 0) {
+		/* First mode, perform layout scan and per-page profiling */
+		do_profiling(&tparams, &profile, vma_targets, vma_count,
+			     __addl_sample_count);
+	}
 
 	/* Do we need to save the profile to file? */
 	if (__save_to) {
@@ -348,8 +387,12 @@ int main(int argc, char* argv[])
 	print_profile(&profile);
 
 	/* Now perform full page ranking */
-	if (__do_ranking)
+	if (__do_ranking) {
+		if (!__load_from && !__addl_sample_count)
+			DBG_ABORT("No profiling samples to perform ranking. Exiting.\n");
+
 		do_ranking(&tparams, &profile, vma_targets, vma_count);
+	}
 
 	return EXIT_SUCCESS;
 }

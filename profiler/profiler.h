@@ -17,6 +17,7 @@
 #define ARM_ISA_MASK (~(1UL))
 
 extern int __run_flags;
+extern int __print_layout;
 extern enum page_operation __page_op;
 
 /* Helper macro to prefix any print statement produced by the host
@@ -120,6 +121,8 @@ struct trace_params
 	void * brkpnt_addr [STAGES];
 	unsigned long t_start;
 	unsigned long t_end;
+	unsigned long vm_peak;
+	unsigned int run_flags;
 	/* To find the text region for vma indexes */
 	char * exe_name;
 	char ** exe_params;
@@ -168,6 +171,7 @@ struct profiled_vma {
 struct profile {
 	unsigned int profile_len;
 	unsigned int num_samples;
+	unsigned int heap_pad;
 	struct profiled_vma * vmas;
 };
 
