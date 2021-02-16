@@ -148,7 +148,7 @@ static int vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
 			     unsigned int * vma_count)
 {
 	/* We assume that vma numbers are in increasing order */
-	static int get_anon = 1;
+	static int get_anon = 0;
 	static int get_text = 0;
 
 	int get_heap = 1;
@@ -363,9 +363,9 @@ int detect_vmpeak(struct trace_params * tparams)
 		buf[255] = '\0';
 		buf[strlen(buf)-1] = '\0';
 
-		if (strncmp("RssAnon:", buf, 8) == 0) {
-			tparams->vm_peak = strtol(buf+8, NULL, 10);
-			DBG_PRINT("RssAnon: %ld\n", tparams->vm_peak);
+		if (strncmp("VmData:", buf, 7) == 0) {
+			tparams->vm_peak = strtol(buf+7, NULL, 10);
+			DBG_PRINT("VmData: %ld\n", tparams->vm_peak);
 			break;
 		}
 	}
