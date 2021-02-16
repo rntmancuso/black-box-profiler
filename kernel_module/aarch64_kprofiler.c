@@ -489,23 +489,28 @@ void which_operation(struct task_struct *task,unsigned long operation,
 {
 	int err;
 	struct vm_area_struct  *vma = data->vmas;
-	DBG_PRINT("operation : %ld\n",operation);
+	DBG_PRINT("operation : %ld\n", operation);
 
 	/* All non-cacheable except pages in page_index array-for
 	   profiling phase is one page at a time*/
-	if (operation == 0){
+	if (operation == 0) {
 		DBG_PRINT("inside operation == 0\n");
-		apply_to_page_range(vma->vm_mm,vma->vm_start,vma->vm_end - vma->vm_start,cacheability_modifier,data);}
+		apply_to_page_range(vma->vm_mm, vma->vm_start,
+				    vma->vm_end - vma->vm_start,
+				    cacheability_modifier, data);
+	}
 
 	/* All cacheable except pages in page_index array-for
 	   profiling phase is one page at a time */
-	else if (operation == 1)
-	     apply_to_page_range(vma->vm_mm,vma->vm_start,vma->vm_end - vma->vm_start,cacheability_modifier,data);
+	else if (operation == 1) {
+		apply_to_page_range(vma->vm_mm, vma->vm_start,
+				    vma->vm_end - vma->vm_start,
+				    cacheability_modifier, data);
+	}
 
 	/* Pages in the page_index array will be selected for
 	 * migration to the private pool */
-	else if (operation == 2)
-	{
+	else if (operation == 2) {
 	      DBG_PRINT("before test_process_page\n");
 
 	      /* data was created for extra info for
@@ -521,19 +526,20 @@ void which_operation(struct task_struct *task,unsigned long operation,
 void vaddr_maker(struct task_struct *task,struct Data *data)
 {
 	int j;
-	int i = ((struct Data*)data)->count_vma;
+	int i = data->count_vma;
          /* Make sure the pages we need are faulted in! (mm_populate) */
          faultin_vma(task, data->vmas);
 
-	 data->page_addr = kmalloc(cp.vmas[i].page_count*sizeof(int),GFP_KERNEL);
+	 if (cp.vmas[i].page_count)
+		 data->page_addr = kmalloc(cp.vmas[i].page_count * sizeof(int), GFP_KERNEL);
+	 else
+		 data->page_addr = NULL;
 
          for (j=0; j < cp.vmas[i].page_count; j++)
-	   {
-	      data->page_addr[j] = data->vmas->vm_start+((cp.vmas[i].page_index[j])*PAGE_SIZE);
-	      DBG_PRINT("cp.vmas[%d].page_index[%d]:%d\n",i,j,cp.vmas[i].page_index[j]);
-	   }
-
-
+	 {
+		 data->page_addr[j] = data->vmas->vm_start+((cp.vmas[i].page_index[j])*PAGE_SIZE);
+		 DBG_PRINT("cp.vmas[%d].page_index[%d]:%d\n",i,j,cp.vmas[i].page_index[j]);
+	 }
 }
 
 /* NOTE: we can get mm from task. There might not be a need to pass it
@@ -567,12 +573,16 @@ void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *ta
 					//DBG_PRINT("after making user vaddr, operation: %d\n",cp.vmas[i].operation);
 
                                         /*decide which operation to do*/
-					which_operation(task,cp.vmas[i].operation,data,cp.vmas[i].page_count);       
+					which_operation(task,cp.vmas[i].operation,data,cp.vmas[i].page_count);
 
-					kfree(data->page_addr); //correct place?
+					if (cp.vmas[i].page_count)
+						kfree(data->page_addr);
+
 					data->vmas = data->vmas->vm_next;
 					process_vma++;
 					break;
+				} else {
+					pr_err("KPROFILER: VM size mismatch!");
 				}
 			}
 			else
@@ -625,18 +635,22 @@ int filling_params(void)
 	 * putting user pointer of cp.touched_vmas in a temp var and
 	 * later use as src in cpy_from_user*/
 	temp_vmas = cp.vmas;
-	cp.vmas = kmalloc(cp.vma_count*sizeof(struct vma_descr),GFP_KERNEL);
+	cp.vmas = kmalloc(cp.vma_count*sizeof(struct vma_descr), GFP_KERNEL);
 
 	/* cp.vmas is a kernel pointer (address) now, can be used as
 	 * dst in cpy_from_usr and src should be usr pointer
 	 * (temp_vmas) */
-	if(copy_from_user(cp.vmas,temp_vmas, cp.vma_count*sizeof(struct vma_descr))) return -EFAULT;
+	if(copy_from_user(cp.vmas,temp_vmas, cp.vma_count*sizeof(struct vma_descr)))
+		return -EFAULT;
 
-	for (i = 0; i < cp.vma_count; i++)
-	{
-             temp_page_index = cp.vmas[i].page_index;
-	     cp.vmas[i].page_index = kmalloc(cp.vmas[i].page_count*sizeof(unsigned int),GFP_KERNEL);
-	     if(copy_from_user(cp.vmas[i].page_index,temp_page_index, cp.vmas[i].page_count*sizeof(unsigned int))) return -EFAULT;
+	for (i = 0; i < cp.vma_count; i++) {
+		temp_page_index = cp.vmas[i].page_index;
+		cp.vmas[i].page_index = kmalloc(cp.vmas[i].page_count *
+						sizeof(unsigned int),GFP_KERNEL);
+
+		if(copy_from_user(cp.vmas[i].page_index, temp_page_index,
+				  cp.vmas[i].page_count*sizeof(unsigned int)))
+			return -EFAULT;
 
 	}
 
@@ -648,17 +662,16 @@ ssize_t memprofile_proc_write(struct file *file, const char __user *buffer,
 			      size_t count, loff_t *data)
 {       int i;
 	DBG_PRINT(KERN_ALERT "memprofile_proc_write\n");
-	if(copy_from_user(&cp, buffer, sizeof(struct profile_params))) return -EFAULT;
-	else
-	{
-	  filling_params();
-	  get_vma();
+	if(copy_from_user(&cp, buffer, sizeof(struct profile_params)))
+		return -EFAULT;
+	else {
+		filling_params();
+		get_vma();
 	}
 
-	for(i = 0; i< cp.vma_count; i++)
-	{
+	for(i = 0; i< cp.vma_count; i++) {
 		if (cp.vmas[i].page_count)
-	             kfree(cp.vmas[i].page_index);
+			kfree(cp.vmas[i].page_index);
 	}
 	kfree(cp.vmas);
         return 0;
