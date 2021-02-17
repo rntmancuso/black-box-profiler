@@ -489,8 +489,8 @@ long faultin_vma(struct task_struct * task, struct vm_area_struct * vma)
 	 return retval;
 }
 
-void which_operation(struct task_struct *task,unsigned long operation,
-		     struct Data* data,int page_count)
+void which_operation(struct task_struct *task, unsigned long operation,
+		     struct Data* data, int page_count)
 {
 	int err;
 	struct vm_area_struct  *vma = data->vmas;
@@ -522,13 +522,14 @@ void which_operation(struct task_struct *task,unsigned long operation,
 	       * apply_to_page_range(), but is usable here too */
 	      test_process_page(task,data,page_count);
 	      DBG_PRINT("before move_pages_to_pvtpool\n");
-	      err = move_pages_to_pvtpool(data->mm,page_count,data->page_addr,alloc_pool_page, 0);
+	      err = move_pages_to_pvtpool(data->mm, page_count, data->page_addr,
+					  alloc_pool_page, 0);
 	      DBG_PRINT("Migrating selected pages, ret = %d\n", err);
 	      test_process_page(task,data,page_count);
 	}
 }
 
-void vaddr_maker(struct task_struct *task,struct Data *data)
+void vaddr_maker(struct task_struct *task, struct Data *data)
 {
 	int j;
 	int i = data->count_vma;
@@ -541,7 +542,7 @@ void vaddr_maker(struct task_struct *task,struct Data *data)
 	else
 		data->page_addr = NULL;
 
-	if (!data->page_addr) {
+	if (cp.vmas[i].page_count && !data->page_addr) {
 		pr_err("[KPROF] Unable to allocate memory.\n");
 		return;
 	}
@@ -578,11 +579,28 @@ void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *ta
 				//DBG_PRINT("cp.vmas[i].vma_index:%d, process_vma:%d\n",cp.vmas[i].vma_index,process_vma);
 				//DBG_PRINT("Len of vma %d is:%d\n",process_vma,(data->vmas->vm_end - data->vmas->vm_start)/PAGE_SIZE);
 				/*checking the consistency*/
+				if (cp.vmas[i].total_pages == (unsigned int)(-1)) {
+					int k;
+					/* Special case denoting that
+					 * a VMA wihtout a known
+					 * layout is being added to
+					 * the current operation. */
+					cp.vmas[i].total_pages = (data->vmas->vm_end - data->vmas->vm_start)/PAGE_SIZE;
+					cp.vmas[i].page_count = cp.vmas[i].total_pages;
+					cp.vmas[i].page_index = kmalloc(cp.vmas[i].page_count *
+						sizeof(unsigned int), GFP_KERNEL);
+
+					for (k = 0; k < cp.vmas[i].page_count; ++k)
+						cp.vmas[i].page_index[k] = k;
+
+					DBG_PRINT("Added non-profiled VMA with index %d\n", i);
+				}
+
 				if (cp.vmas[i].total_pages == (data->vmas->vm_end - data->vmas->vm_start)/PAGE_SIZE)
 		        	{
 					// DBG_PRINT("VMA[%d] is: %d and its start: %lx\n",i,cp.vmas[i].vma_index, data->vmas->vm_start);
 					/*making user virtual adddresses for this VMA*/
-					vaddr_maker(task,data);
+					vaddr_maker(task, data);
 					//DBG_PRINT("after making user vaddr, operation: %d\n",cp.vmas[i].operation);
 
                                         /*decide which operation to do*/
