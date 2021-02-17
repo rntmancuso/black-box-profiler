@@ -76,6 +76,10 @@ module_param(verbose, int, 0660);
         {}
 #endif
 
+#define DBG_INFO(format, ...)						\
+        do {                                                            \
+		pr_info("[KPROF] " format, ##__VA_ARGS__);		\
+        } while (0)
 
 /* TODO: retrieve physical memory aperture from device tree */
 #define MEM_START_HI      0x85dc00000UL
@@ -472,16 +476,17 @@ long faultin_vma(struct task_struct * task, struct vm_area_struct * vma)
 	  * We want mlock to succeed for regions that have any
 	  * permissions other than PROT_NONE.
 	  */
-	         if (vma->vm_flags & (VM_READ | VM_WRITE | VM_EXEC))
-                gup_flags |= FOLL_FORCE;
+	 if (vma->vm_flags & (VM_READ | VM_WRITE | VM_EXEC))
+		 gup_flags |= FOLL_FORCE;
 
-        down_read(&task->mm->mmap_sem);
-        retval = get_user_pages_remote(task, task->mm, start, nr_pages,
+	 down_read(&task->mm->mmap_sem);
+	 retval = get_user_pages_remote(task, task->mm, start, nr_pages,
                                          gup_flags, NULL, NULL, &locked);
 
-        if (locked)
-                up_read(&task->mm->mmap_sem);
-        return retval;
+	 if (locked)
+		 up_read(&task->mm->mmap_sem);
+
+	 return retval;
 }
 
 void which_operation(struct task_struct *task,unsigned long operation,
@@ -527,19 +532,27 @@ void vaddr_maker(struct task_struct *task,struct Data *data)
 {
 	int j;
 	int i = data->count_vma;
-         /* Make sure the pages we need are faulted in! (mm_populate) */
-         faultin_vma(task, data->vmas);
+	/* Make sure the pages we need are faulted in! (mm_populate) */
+	faultin_vma(task, data->vmas);
 
-	 if (cp.vmas[i].page_count)
-		 data->page_addr = kmalloc(cp.vmas[i].page_count * sizeof(int), GFP_KERNEL);
-	 else
-		 data->page_addr = NULL;
+	if (cp.vmas[i].page_count)
+		data->page_addr = kmalloc(cp.vmas[i].page_count *
+					  sizeof(unsigned long), GFP_KERNEL);
+	else
+		data->page_addr = NULL;
 
-         for (j=0; j < cp.vmas[i].page_count; j++)
-	 {
-		 data->page_addr[j] = data->vmas->vm_start+((cp.vmas[i].page_index[j])*PAGE_SIZE);
-		 DBG_PRINT("cp.vmas[%d].page_index[%d]:%d\n",i,j,cp.vmas[i].page_index[j]);
-	 }
+	if (!data->page_addr) {
+		pr_err("[KPROF] Unable to allocate memory.\n");
+		return;
+	}
+
+	for (j = 0; j < cp.vmas[i].page_count; j++)
+	{
+		data->page_addr[j] = data->vmas->vm_start +
+			((cp.vmas[i].page_index[j])*PAGE_SIZE);
+		DBG_PRINT("cp.vmas[%d].page_index[%d]:%d\n", i, j,
+			  cp.vmas[i].page_index[j]);
+	}
 }
 
 /* NOTE: we can get mm from task. There might not be a need to pass it
@@ -573,7 +586,8 @@ void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *ta
 					//DBG_PRINT("after making user vaddr, operation: %d\n",cp.vmas[i].operation);
 
                                         /*decide which operation to do*/
-					which_operation(task,cp.vmas[i].operation,data,cp.vmas[i].page_count);
+					which_operation(task, cp.vmas[i].operation,
+							data, cp.vmas[i].page_count);
 
 					if (cp.vmas[i].page_count)
 						kfree(data->page_addr);
@@ -624,8 +638,8 @@ void get_vma (void)
 int filling_params(void)
 {
 	int i;
-	unsigned int* temp_page_index;
-	struct vma_descr *temp_vmas;
+	unsigned int * temp_page_index;
+	struct vma_descr * temp_vmas;
 
         /* cp has a field size with useful data and cp.vmas which so
 	 * far has a user ptr which is useless in kernel we don't need
@@ -635,7 +649,7 @@ int filling_params(void)
 	 * putting user pointer of cp.touched_vmas in a temp var and
 	 * later use as src in cpy_from_user*/
 	temp_vmas = cp.vmas;
-	cp.vmas = kmalloc(cp.vma_count*sizeof(struct vma_descr), GFP_KERNEL);
+	cp.vmas = kmalloc(cp.vma_count * sizeof(struct vma_descr), GFP_KERNEL);
 
 	/* cp.vmas is a kernel pointer (address) now, can be used as
 	 * dst in cpy_from_usr and src should be usr pointer
