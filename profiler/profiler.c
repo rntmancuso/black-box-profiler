@@ -43,6 +43,7 @@ int __no_kernel = 0;
 int __run_flags = 0;
 int __do_ranking = 0;
 int __print_layout = 0;
+int __migrate_pages = 0;
 enum page_operation __page_op = PAGE_CACHEABLE;
 char * __save_to = NULL;
 char * __load_from = NULL;
@@ -69,7 +70,7 @@ void send_profile_to_kernel(struct profile_params * params,
 	}
 
 	if (kfd < 0) {
-		kfd = open(KERN_PROCFILE, O_RDWR);
+		kfd = open(KERN_PROCFILE, O_RDWR | O_SYNC);
 		if (kfd < 0)
 			DBG_ABORT("Unable to open kernel procfile %s\n", KERN_PROCFILE);
 	}
@@ -86,6 +87,7 @@ struct vma_descr * do_layout_detect(struct trace_params * tparams,
 {
 	struct vma_descr * vma_targets = NULL;
 	int res;
+	(void)res;
 
 	res = run_to_symbol(tparams);
 	res = detect_vmpeak(tparams);
@@ -113,6 +115,7 @@ static void __do_profiling(struct trace_params * tparams, struct profile * profi
 	int res;
 	unsigned int i, j;
 	int pg_count = 0;
+	(void)res;
 
 	/* Setup the parameters that we will pass to the kernel */
 	memset(&params, 0, sizeof(struct profile_params));
@@ -162,6 +165,7 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 	int res;
 	int s;
 	int total_pages = get_total_pages(vma_targets, vma_count);
+	(void)res;
 
 	for (s = 0; s < sample_count; ++s) {
 		DBG_INFO("PROFILING: Collecting sample %d of %d\n", s+1, sample_count);
@@ -181,6 +185,7 @@ void do_ranking(struct trace_params * tparams, struct profile * profile,
 	int i, res;
 	unsigned long * incr_timing = (void *)malloc(total_pages *
 						     sizeof(unsigned long));
+	(void)res;
 
 	/* Make sure that the profile is sorted by page statistics! */
 	sort_profile_by_stats(profile);
@@ -214,6 +219,45 @@ void do_ranking(struct trace_params * tparams, struct profile * profile,
 	free(incr_timing);
 }
 
+void do_migration(struct trace_params * tparams, struct profile * profile,
+		  struct vma_descr * vma_targets, unsigned int vma_count,
+		  int num_pages)
+{
+	struct profile_params migr_params;
+	unsigned long timing;
+	int res;
+	(void)res;
+
+	/* Make sure that the profile is sorted by page statistics! */
+	sort_profile_by_stats(profile);
+
+	/* Autoselect migration pages from profile but always add text
+	 * pages for migration */
+	build_incremental_params(profile, &migr_params, vma_targets,
+				 vma_count, num_pages);
+
+	/* Add the text VMA for migration (not propfiled by
+	 * default) */
+	params_add_unprofiled_vma(&migr_params, 0);
+
+	/* Instruct the kernel to perform page migration */
+	params_set_operation(&migr_params, PAGE_MIGRATE);
+
+	res = run_to_symbol(tparams);
+
+	/* Perform interact with the kernel */
+	send_profile_to_kernel(&migr_params, tparams);
+
+	res = run_to_completion(tparams);
+
+	free_params(&migr_params);
+
+	/* Print timing result */
+	timing = tparams->t_end - tparams->t_start;
+	DBG_INFO("MIGRATION: Run completed. Timing: %ld\n", timing);
+}
+
+
 int main(int argc, char* argv[])
 {
 	int opt, i, tracee_cmd_idx, __addl_sample_count = 1;
@@ -221,7 +265,6 @@ int main(int argc, char* argv[])
 	struct vma_descr * vma_targets;
 	unsigned int vma_count;
 	struct profile profile;
-	unsigned int operation;
 
 	/* Parse command line parameters. Just as an example, this
 	 * program accepts a parameter -e <value> and if specified it
@@ -231,19 +274,17 @@ int main(int argc, char* argv[])
 	 * end of the command line after all the optional
 	 * arguments. */
 
-	while((opt = getopt(argc, argv, ":s:c:n:m:hvpqo:i:rl")) != -1) {
+	while((opt = getopt(argc, argv, ":s:g:n:m:hvpqo:i:rl")) != -1) {
 		switch (opt) {
 		case 'h':
 			DBG_PRINT(HELP_STRING, argv[0]);
 			return EXIT_SUCCESS;
 			break;
-		case 'm': /* Determine the operation mode. */
+		case 'm': /* Determine the profiling mode. */
 			if(strcmp("c", optarg) == 0)
 				__page_op = PAGE_CACHEABLE;
 			else if (strcmp("nc", optarg) == 0)
 				__page_op = PAGE_NONCACHEABLE;
-			else if (strcmp("mi", optarg) == 0)
-				__page_op = PAGE_MIGRATE;
 			else
 				DBG_ABORT("Unknown mode %s. Exiting.\n", optarg);
 			break;
@@ -282,9 +323,10 @@ int main(int argc, char* argv[])
 		case 'n': //number of samples
 			__addl_sample_count = strtol(optarg, NULL, 0);
 			break;
-		case 'c': //cacheabe : c = 1, noncacheable : c = 0
-			operation = strtol(optarg, NULL, 0);
-			printf("operation is : %d\n",operation);
+		case 'g': /* Determine if migration to private pool
+			   * should be performed (>0 value) and for
+			   * how many pages. */
+			__migrate_pages = strtoul(optarg, NULL, 0);
 			break;
 		case 's': //symbol which we are gonna put breakpoint on
 			tparams.symbol = optarg;
@@ -392,6 +434,14 @@ int main(int argc, char* argv[])
 			DBG_ABORT("No profiling samples to perform ranking. Exiting.\n");
 
 		do_ranking(&tparams, &profile, vma_targets, vma_count);
+	}
+
+	/* Now perform full page ranking */
+	if (__migrate_pages > 0) {
+		if (!__load_from && !__addl_sample_count)
+			DBG_ABORT("No profiling samples to perform ranking. Exiting.\n");
+
+		do_migration(&tparams, &profile, vma_targets, vma_count, __migrate_pages);
 	}
 
 	return EXIT_SUCCESS;

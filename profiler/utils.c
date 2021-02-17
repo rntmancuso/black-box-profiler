@@ -371,6 +371,18 @@ void build_incremental_params(const struct profile * in_profile,
 
 }
 
+
+/* This function sets the desired operation to perform in the
+ * kernel-side handling of the profile parameters */
+void params_set_operation(struct profile_params * params, int operation)
+{
+	unsigned int i;
+
+	for (i = 0; i < params->vma_count; ++i)
+		params->vmas[i].operation = operation;
+
+}
+
 /* This function sets the VMA and page index for the current profiling
  * operation. When profiling, we know that the profile_params
  * structure will only contain a single VMA with a single page
@@ -429,7 +441,7 @@ void print_params(struct profile_params * params)
 		DBG_INFO("========== (%d/%d) VMA index: %d ==========\n",
 			 i, len, cur_vma.vma_index);
 		DBG_INFO("Index     :\t%d\n", cur_vma.vma_index);
-		DBG_INFO("Tot. Pages:\t%d\n", cur_vma.total_pages);
+		DBG_INFO("Tot. Pages:\t%d\n", (cur_vma.total_pages));
 		DBG_INFO("Op.  Pages:\t%d\n", cur_vma.page_count);
 		DBG_INFO("Operation :\t%d\n", cur_vma.operation);
 		DBG_INFO("Page list :\n");

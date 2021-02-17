@@ -29,6 +29,10 @@ struct vma_descr * params_get_vma(struct profile_params * params,
 void params_add_page(struct profile_params * params, struct profiled_vma * vma,
 		     struct profiled_vma_page * page);
 
+/* Add an entire VMA to the parameter passed to the kernel */
+void params_add_unprofiled_vma(struct profile_params * params,
+			       unsigned int vma_index);
+
 /* Add a VMA in the layout of the application under analysis, starting
  * from a vma descriptor extraced by the vma finder */
 struct vma_descr * add_vma_descr(struct vma_descr *vma, struct vma_descr ** vmas,

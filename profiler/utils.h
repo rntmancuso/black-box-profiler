@@ -58,6 +58,10 @@ void build_incremental_params(const struct profile * in_profile,
 void set_profiling_page(struct profile_params * params,
 			struct vma_descr * vma, int page_index);
 
+/* This function sets the desired operation to perform in the
+ * kernel-side handling of the profile parameters */
+void params_set_operation(struct profile_params * params, int operation);
+
 /* Prints a nicely formatted view of the current profile */
 void print_profile(struct profile * profile);
 

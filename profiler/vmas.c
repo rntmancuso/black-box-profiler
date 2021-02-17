@@ -75,6 +75,30 @@ struct vma_descr * params_get_vma(struct profile_params * params,
 	return out_vma;
 }
 
+/* Retrieve the reference to the VMA descriptor inside the list of
+ * parameters given a VMA descriptor from the application's memory
+ * layput. The VMA will be added if missing. */
+struct vma_descr * params_get_vma_descr(struct profile_params * params,
+					struct vma_descr * vma)
+{
+	unsigned int i;
+	struct vma_descr * out_vma = NULL;
+
+	for (i = 0; i < params->vma_count; ++i) {
+		if (params->vmas[i].vma_index == vma->vma_index) {
+			out_vma = &params->vmas[i];
+			break;
+		}
+	}
+
+	/* The VMA needs to be allocated? */
+	if (!out_vma) {
+		out_vma = add_vma_descr(vma, &params->vmas, &params->vma_count);
+	}
+
+	return out_vma;
+}
+
 /* Add a new page/vma pair in the set of parameters that willl be
  * passed to the kernel. */
 void params_add_page(struct profile_params * params, struct profiled_vma * vma,
@@ -98,9 +122,37 @@ void params_add_page(struct profile_params * params, struct profiled_vma * vma,
 	out_vma->page_index[out_vma->page_count-1] = page->page_index;
 }
 
+/* Add an entire VMA to the parameter passed to the kernel */
+void params_add_unprofiled_vma(struct profile_params * params, unsigned int vma_index)
+{
+	/* Here we know for sure that out_vma points to a valid VMA to
+	 * which we will add the new page. */
+
+	/* NOTE: we use "(unsigned int)(-1)" to signal the kernel that
+	 * we do not have any information about the size of this
+	 * VMA. */
+	struct vma_descr to_add = {
+		.vma_index = vma_index,
+		.total_pages = (unsigned int)(-1),
+		.page_count = 0,
+		.operation = __page_op,
+		.page_index = NULL,
+	};
+
+	struct vma_descr * out_vma = params_get_vma_descr(params, &to_add);
+
+	DBG_INFO("ADDING total_pages %d\n", params->vmas[0].total_pages);
+
+	/* This should never happen */
+	if (out_vma->page_index)
+		DBG_ABORT("Adding non-profiled VMA %d but non-empty list of "
+			  "pages exists in parameters.\n", vma_index);
+}
+
 struct vma_descr * add_vma_descr(struct vma_descr *vma, struct vma_descr ** vmas,
 	     unsigned int * vma_count)
 {
+	unsigned int pos;
 	if (*vmas == NULL) {
 		*vma_count = 1;
 		*vmas = (struct vma_descr *)malloc(sizeof(struct vma_descr));
@@ -110,7 +162,20 @@ struct vma_descr * add_vma_descr(struct vma_descr *vma, struct vma_descr ** vmas
 				       sizeof(struct vma_descr) * (*vma_count));
 	}
 
-	struct vma_descr * new_vma = &(*vmas)[*vma_count-1];
+	/* Find out where to insert the new VMA */
+	for (pos = 0; pos < (*vma_count) - 1; ++pos) {
+		struct vma_descr * cur_vma = &(*vmas)[pos];
+		if (cur_vma->vma_index > vma->vma_index)
+			break;
+	}
+
+	if (pos < (*vma_count) - 1) {
+		unsigned int to_move = ((*vma_count) - 1) - pos;
+		memmove(&(*vmas)[pos+1], &(*vmas)[pos],
+			to_move * sizeof(struct vma_descr));
+	}
+
+	struct vma_descr * new_vma = &(*vmas)[pos];
 	new_vma->vma_index = vma->vma_index;
 	new_vma->total_pages = vma->total_pages;
 
@@ -148,7 +213,7 @@ static int vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
 			     unsigned int * vma_count)
 {
 	/* We assume that vma numbers are in increasing order */
-	static int get_anon = 0;
+	static int get_anon = 1;
 	static int get_text = 0;
 
 	int get_heap = 1;
@@ -156,7 +221,7 @@ static int vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
 
 	if ((!(strcmp(vma->mappedfile,"anonymous")) && get_anon))
 	{
-		get_anon = 0;
+		get_anon = 1; /* Get all the Anon areas */
 		add_vma(vma, vmas, vma_count);
 		return 1;
 	}
