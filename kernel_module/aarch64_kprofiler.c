@@ -253,14 +253,15 @@ struct page * alloc_pool_page(struct page * page, unsigned long track_page)
 
 	page_va = (void *)gen_pool_alloc(mem_pool, PAGE_SIZE);
 
-        pr_info("POOL: Allocating VA: 0x%08lx\n", (unsigned long)page_va);
+        DBG_PRINT("POOL: Allocating VA: 0x%08lx\n", (unsigned long)page_va);
 
 	if (!page_va) {
                 pr_err("Unable to allocate page from colored pool.\n");
 		return NULL;
 	}
 
-	dump_page(virt_to_page(page_va), "pool alloc debug");
+	if (verbose)
+		dump_page(virt_to_page(page_va), "pool alloc debug");
 
 	/* If this page is allocated by a profiler and needs to be
          * manually reclaimed at module teardown */
@@ -301,12 +302,13 @@ int __my_free_pvtpool_page (struct page * page)
         page_va = page_to_virt(page);
 
 	if(__addr_in_gen_pool(mem_pool, (unsigned long)page_va, PAGE_SIZE)) {
-                pr_info("Dynamic de-allocation for phys page 0x%08llx\n",
+                DBG_PRINT("Dynamic de-allocation for phys page 0x%08llx\n",
 			page_to_phys(page));
 
 
 	        set_page_count(page, 1);
-                dump_page(page, "pool dealloc debug");
+		if (verbose)
+			dump_page(page, "pool dealloc debug");
 
                 gen_pool_free(mem_pool, (unsigned long)page_va, PAGE_SIZE);
 		return 0;
@@ -520,12 +522,15 @@ void which_operation(struct task_struct *task, unsigned long operation,
 
 	      /* data was created for extra info for
 	       * apply_to_page_range(), but is usable here too */
-	      test_process_page(task,data,page_count);
+	      //test_process_page(task,data,page_count);
 	      DBG_PRINT("before move_pages_to_pvtpool\n");
 	      err = move_pages_to_pvtpool(data->mm, page_count, data->page_addr,
 					  alloc_pool_page, 0);
+	      if (err)
+		      pr_err("Unable to complete page migration. Ret = %d\n", err);
+
 	      DBG_PRINT("Migrating selected pages, ret = %d\n", err);
-	      test_process_page(task,data,page_count);
+	      //test_process_page(task,data,page_count);
 	}
 }
 
