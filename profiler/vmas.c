@@ -11,7 +11,7 @@
  **********************************************************************/
 
 ///
-#define _GNU_SOURCE 
+#define _GNU_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -141,8 +141,6 @@ void params_add_unprofiled_vma(struct profile_params * params, unsigned int vma_
 
 	struct vma_descr * out_vma = params_get_vma_descr(params, &to_add);
 
-	DBG_INFO("ADDING total_pages %d\n", params->vmas[0].total_pages);
-
 	/* This should never happen */
 	if (out_vma->page_index)
 		DBG_ABORT("Adding non-profiled VMA %d but non-empty list of "
@@ -210,14 +208,16 @@ void add_vma(struct vma_struct *vma, struct vma_descr ** vmas,
 }
 
 static int vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
-			     unsigned int * vma_count)
+			    unsigned int * vma_count, unsigned int index)
 {
 	/* We assume that vma numbers are in increasing order */
 	static int get_anon = 1;
 	static int get_text = 0;
+	static int get_bss = 1;
+	static int get_rodata = 1;
 
 	int get_heap = 1;
-	int get_stack = 0;
+	int get_stack = 1;
 
 	if ((!(strcmp(vma->mappedfile,"anonymous")) && get_anon))
 	{
@@ -232,12 +232,40 @@ static int vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
 		return 1;
 	}
 
+	else if  (0 && !vma->executable && strstr(vma->mappedfile, "libm"))
+	{
+		add_vma(vma, vmas, vma_count);
+		return 1;
+	}
+
+	else if  (0 && !vma->executable && strstr(vma->mappedfile, "libc"))
+	{
+		add_vma(vma, vmas, vma_count);
+		return 1;
+	}
+
+
 	else if  (vma->executable && get_text)
 	{
 		get_text = 0;
 		add_vma(vma, vmas, vma_count);
 		return 1;
 	}
+
+	else if  (vma->writable && get_bss && index < 3)
+	{
+		get_bss = 0;
+		add_vma(vma, vmas, vma_count);
+		return 1;
+	}
+
+	else if  (!vma->writable && !vma->executable && get_rodata && index < 3)
+	{
+		get_rodata = 0;
+		add_vma(vma, vmas, vma_count);
+		return 1;
+	}
+
 
 	else if (get_stack && (strcmp(vma->mappedfile,"[stack]")) == 0)
 	{
@@ -349,10 +377,10 @@ static void read_proc_maps_file(pid_t pid, struct vma_descr ** vmas,
 		vma = scan_proc_maps_line(nvma, buf);
 
 		/* for finding vma indices and size of each vma */
-		added = vma_index_finder(vma, vmas, vma_count);
+		added = vma_index_finder(vma, vmas, vma_count, nvma);
 
 		if(__verbose_output || __print_layout) {
-			DBG_INFO("%c  %s\n", (added?'*':' '),buf);
+			DBG_INFO("[%3d] %c  %s\n", nvma, (added?'*':' '),buf);
 		}
 
 		free(vma);

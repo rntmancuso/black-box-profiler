@@ -426,7 +426,8 @@ int main(int argc, char* argv[])
 	}
 
 	/* Output a pretty print of the profile. */
-	print_profile(&profile);
+	//sort_profile_by_stats(&profile);
+	//print_profile(&profile);
 
 	/* Now perform full page ranking */
 	if (__do_ranking) {
