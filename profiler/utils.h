@@ -17,6 +17,9 @@
 #define RUN_QUIET          (1 << 0)
 #define RUN_SET_MALLOC     (1 << 1)
 
+#define clear_disk_cache()				\
+	system("echo 1 > /proc/sys/vm/drop_caches")
+
 /* Collect profiling information after a single round of profiling,
  * i.e. after timing the effect of manipulating the cacheability of a
  * single page. */

@@ -123,6 +123,11 @@ struct trace_params
 	unsigned long t_end;
 	unsigned long vm_peak;
 	unsigned int run_flags;
+
+	/* To monitor memory activity */
+	unsigned long m_start;
+	unsigned long m_end;
+
 	/* To find the text region for vma indexes */
 	char * exe_name;
 	char ** exe_params;
@@ -190,9 +195,12 @@ enum page_operation {
 	/* Keep all pages as cacheable, but make the ones in the list
 	 * non-cacheable */
 	PAGE_NONCACHEABLE,
-	/* Migrate pages specified in the list to the provate cache
+	/* Migrate pages specified in the list to the private cache
 	 * pool */
 	PAGE_MIGRATE,
+	/* Do not migrate pages, but instead allocate directly from
+	 * private cache pool during faultin_vma operation */
+	PAGE_PVTALLOC,
 };
 
 /* For measuring time directly through per-core cycle counters */
@@ -216,3 +224,5 @@ enum page_operation {
 #endif
 #endif
 
+#define __NR_perf_event_open 241
+long long read_pmu(void);

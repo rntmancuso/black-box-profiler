@@ -314,27 +314,31 @@ void build_incremental_params(const struct profile * in_profile,
 
 	memset(__page_ind, 0, in_len * sizeof(int));
 
+	/* Make sure that the VMA exists in the profile */
+	for (j = 0; j < in_len; ++j) {
+		struct profiled_vma * in_vma = &in_profile->vmas[j];
+		params_get_vma(out_profile, in_vma);
+	}
+
 	/* Now for the fun part: scan all the pages in all the VMAs,
 	 * keeping track of the global min and select/add one page at
 	 * a time. */
 	for (i = 0; i < nr_pages; ++i) {
-		unsigned long min_max_cycles = ~(0UL);
+		double min_max_cycles = 1.0/0.0; /* aka +infinity */
 		int min_vma;
 		for (j = 0; j < in_len; ++j) {
 			struct profiled_vma * in_vma = &in_profile->vmas[j];
-			/* Make sure that the VMA exists in the profile */
-			params_get_vma(out_profile, in_vma);
 
 			if (__page_ind[j] < in_vma->page_count) {
 				struct profiled_vma_page * in_page = &in_vma->pages[__page_ind[j]];
 				if (__page_op == PAGE_CACHEABLE &&
-				    in_page->max_cycles < min_max_cycles) {
+				    in_page->avg_cycles < min_max_cycles) {
 					min_vma = j;
-					min_max_cycles = in_page->max_cycles;
+					min_max_cycles = in_page->avg_cycles;
 				} else if (__page_op == PAGE_NONCACHEABLE &&
-					   LONG_MAX - in_page->max_cycles < min_max_cycles) {
+					   LONG_MAX - in_page->avg_cycles < min_max_cycles) {
 					min_vma = j;
-					min_max_cycles = LONG_MAX - in_page->max_cycles;
+					min_max_cycles = LONG_MAX - in_page->avg_cycles;
 				}
 			}
 		}
@@ -503,13 +507,13 @@ void set_realtime(int prio, int cpu)
 static int profiled_vma_page_stats_cmp (const void * a, const void * b) {
 	if (__page_op == PAGE_CACHEABLE) {
 		return (
-			((struct profiled_vma_page*)a)->max_cycles -
-			((struct profiled_vma_page*)b)->max_cycles
+			((struct profiled_vma_page*)a)->avg_cycles -
+			((struct profiled_vma_page*)b)->avg_cycles
 			);
 	} else {
 		return (
-			((struct profiled_vma_page*)b)->max_cycles -
-			((struct profiled_vma_page*)a)->max_cycles
+			((struct profiled_vma_page*)b)->avg_cycles -
+			((struct profiled_vma_page*)a)->avg_cycles
 			);
 	}
 }
@@ -885,6 +889,7 @@ static void continue_until_return(struct trace_params * tparams)
 		  tparams->brkpnt_addr[TRACEE_EXIT]);
 
 	/* Ready to resume tracee, but not before acquiring the timing */
+	tparams->m_start = read_pmu();
 	get_timing(tparams->t_start);
 
 	if(ptrace(PTRACE_CONT, tparams->pid, NULL, NULL) < 0) {
@@ -897,6 +902,7 @@ static void continue_until_end(struct trace_params * tparams)
 {
 	/* First thing first, get end of timing observation */
 	get_timing(tparams->t_end);
+	tparams->m_end = read_pmu();
 
 	DBG_PRINT("TIMING: function [%s] took %ld CPU cycles\n",
 		  tparams->symbol, tparams->t_end - tparams->t_start);

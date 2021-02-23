@@ -10,7 +10,7 @@
  *                                                                    *
  **********************************************************************/
 ///
-#define _GNU_SOURCE 
+#define _GNU_SOURCE
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,6 +32,7 @@
 #include <gelf.h>
 #include <sched.h>
 #include <errno.h>
+#include <linux/perf_event.h>
 
 #include "profiler.h"
 #include "utils.h"
@@ -43,10 +44,34 @@ int __no_kernel = 0;
 int __run_flags = 0;
 int __do_ranking = 0;
 int __print_layout = 0;
-int __migrate_pages = 0;
+int __print_profile = 0;
+int __migrate_pages = -1;
 enum page_operation __page_op = PAGE_CACHEABLE;
 char * __save_to = NULL;
 char * __load_from = NULL;
+
+static int fddev = -1;
+__attribute__((constructor)) static void
+init(void)
+{
+	static struct perf_event_attr attr;
+	attr.type = PERF_TYPE_RAW;
+	attr.config = 0x17;
+	fddev = syscall(__NR_perf_event_open, &attr, -1, CHILD_CPU, -1, 0);
+}
+
+__attribute__((destructor)) static void
+fini(void)
+{
+	close(fddev);
+}
+
+long long read_pmu(void)
+{
+	long long result = 0;
+	if (read(fddev, &result, sizeof(result)) < sizeof(result)) return 0;
+	return result;
+}
 
 /* Send parameters to the kernel module  */
 void send_profile_to_kernel(struct profile_params * params,
@@ -185,6 +210,9 @@ void do_ranking(struct trace_params * tparams, struct profile * profile,
 	int i, res;
 	unsigned long * incr_timing = (void *)malloc(total_pages *
 						     sizeof(unsigned long));
+	unsigned long * incr_memory = (void *)malloc(total_pages *
+						     sizeof(unsigned long));
+
 	(void)res;
 
 	/* Make sure that the profile is sorted by page statistics! */
@@ -208,15 +236,17 @@ void do_ranking(struct trace_params * tparams, struct profile * profile,
 		print_progress("RANKING", i+1, total_pages);
 
 		incr_timing[i] = tparams->t_end - tparams->t_start;
+		incr_memory[i] = tparams->m_end - tparams->m_start;
 	}
 
 	/* Printout timing results */
 	DBG_INFO("\nRANKED TIMING:\n");
 	for (i = 0; i < total_pages; ++i) {
-		DBG_INFO("%d, %ld\n", i+1, incr_timing[i]);
+		DBG_INFO("%d, C: %ld\tM: %ld\n", i+1, incr_timing[i], incr_memory[i]);
 	}
 
 	free(incr_timing);
+	free(incr_memory);
 }
 
 void do_migration(struct trace_params * tparams, struct profile * profile,
@@ -224,9 +254,15 @@ void do_migration(struct trace_params * tparams, struct profile * profile,
 		  int num_pages)
 {
 	struct profile_params migr_params;
-	unsigned long timing;
+	unsigned long timing, mem;
+	int total_pages = get_total_pages(vma_targets, vma_count);
+
 	int res;
 	(void)res;
+
+	if (num_pages > total_pages) {
+		DBG_INFO("NOTE: setting num_pages = %d\n", total_pages);
+	}
 
 	/* Make sure that the profile is sorted by page statistics! */
 	sort_profile_by_stats(profile);
@@ -239,9 +275,20 @@ void do_migration(struct trace_params * tparams, struct profile * profile,
 	/* Add the text VMA for migration (not propfiled by
 	 * default) */
 	params_add_unprofiled_vma(&migr_params, 0);
+	/*
+	 * params_add_unprofiled_vma(&migr_params, 3);
+	 * params_add_unprofiled_vma(&migr_params, 5);
+	 * params_add_unprofiled_vma(&migr_params, 6);
+	 * params_add_unprofiled_vma(&migr_params, 8);
+	 * params_add_unprofiled_vma(&migr_params, 10);
+	 * params_add_unprofiled_vma(&migr_params, 11);
+	 */
 
 	/* Instruct the kernel to perform page migration */
-	params_set_operation(&migr_params, PAGE_MIGRATE);
+	if (num_pages == 0)
+		params_set_operation(&migr_params, PAGE_PVTALLOC);
+	else
+		params_set_operation(&migr_params, PAGE_MIGRATE);
 
 	res = run_to_symbol(tparams);
 
@@ -254,7 +301,11 @@ void do_migration(struct trace_params * tparams, struct profile * profile,
 
 	/* Print timing result */
 	timing = tparams->t_end - tparams->t_start;
-	DBG_INFO("MIGRATION: Run completed. Timing: %ld\n", timing);
+	mem = tparams->m_end - tparams->m_start;
+
+	DBG_INFO("MIGRATION: Run completed. Timing: %ld, Memory: %ld\n", timing, mem);
+
+	clear_disk_cache();
 }
 
 
@@ -265,6 +316,7 @@ int main(int argc, char* argv[])
 	struct vma_descr * vma_targets;
 	unsigned int vma_count;
 	struct profile profile;
+	int cmd_found = 0;
 
 	/* Parse command line parameters. Just as an example, this
 	 * program accepts a parameter -e <value> and if specified it
@@ -274,7 +326,7 @@ int main(int argc, char* argv[])
 	 * end of the command line after all the optional
 	 * arguments. */
 
-	while((opt = getopt(argc, argv, ":s:g:n:m:hvpqo:i:rl")) != -1) {
+	while(!cmd_found && (opt = getopt(argc, argv, "-:s:g:n:m:hvpqto:i:rl")) != -1) {
 		switch (opt) {
 		case 'h':
 			DBG_PRINT(HELP_STRING, argv[0]);
@@ -332,11 +384,21 @@ int main(int argc, char* argv[])
 			tparams.symbol = optarg;
 			DBG_PRINT("Timing function %s\n", tparams.symbol);
 			break;
-			//case 'o':
+		case 't': /* Translate profile in uman-readable format */
+			__print_profile = 1;
+			break;
+		case 1:
+			cmd_found = 1;
+			optind--;
+			break;
 		case '?':
 			DBG_ABORT("Invalid parameter. Exiting.\n");
+			break;
 		}
 	}
+
+	/* Attempt to enable memory access counter */
+	DBG_INFO("PMU READ: %d\n", read_pmu());
 
 	/* Check that the symbol to observe has been specified */
 	if (!tparams.symbol) {
@@ -422,12 +484,17 @@ int main(int argc, char* argv[])
 
 	/* Do we need to save the profile to file? */
 	if (__save_to) {
+		if (!__addl_sample_count)
+			DBG_ABORT("No new samples to save. Not overwriting with an empty profile.\n");
+
 		save_profile(__save_to, vma_targets, vma_count, &profile);
 	}
 
 	/* Output a pretty print of the profile. */
-	//sort_profile_by_stats(&profile);
-	//print_profile(&profile);
+	if (__print_profile) {
+		sort_profile_by_stats(&profile);
+		print_profile(&profile);
+	}
 
 	/* Now perform full page ranking */
 	if (__do_ranking) {
@@ -438,7 +505,7 @@ int main(int argc, char* argv[])
 	}
 
 	/* Now perform full page ranking */
-	if (__migrate_pages > 0) {
+	if (__migrate_pages >= 0) {
 		if (!__load_from && !__addl_sample_count)
 			DBG_ABORT("No profiling samples to perform ranking. Exiting.\n");
 
