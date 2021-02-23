@@ -1,8 +1,5 @@
-obj-m = migr_mod.o
-obj-m += aarch64_functime_kmod.o
-obj-m += k_profiler.o
-
-k_profiler-objs = kprofiler.o cache_ops.o
+obj-m += aarch64_kmod.o
+aarch64_kmod-objs = aarch64_kprofiler.o cache_ops.o migr_pgtables.o
 
 export CROSS_COMPILE:=aarch64-linux-gnu-
 export ARCH:=arm64

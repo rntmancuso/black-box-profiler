@@ -34,8 +34,10 @@
 #include <linux/cpumask.h>
 #include <linux/cpu.h>
 #include <linux/mm.h>
+#include <asm-generic/pgalloc.h>
 #include <asm/io.h>
 #include <linux/proc_fs.h>
+#include <linux/sched/mm.h>
 
 #ifdef __arm__
 #include <asm/cacheflush.h> /*for processor L1 cache flushing*/
@@ -56,6 +58,14 @@
 #  include <linux/sched/rt.h>
 #endif
 #include <linux/sched.h>
+
+/* At insert time, decide if we are gonna use both pools or disable
+ * them selectively */
+int use_lopool = 1;
+module_param(use_lopool, int, 0660);
+
+int use_hipool = 1;
+module_param(use_hipool, int, 0660);
 
 /*****************************************************************
  *
@@ -93,14 +103,12 @@ module_param(verbose, int, 0660);
 #define NUMA_NODE_THIS    -1
 
 /* Handle for remapped memory */
-static void * __pool_kva_hi;
-static void * __pool_kva_lo;
+static void * __pool_kva_hi = NULL;
+static void * __pool_kva_lo = NULL;
 
 /* This is just a hack: keep track of the (single) allocated page so *
  * that we can deallocate it upon module cleanup */
-static void ** __allocd_pages = NULL;
-static unsigned int __allocd_count = 0;
-#define MAX_PAGES         1000
+static unsigned int __in_pool = 0;
 
 struct gen_pool * mem_pool = NULL;
 
@@ -111,7 +119,8 @@ struct gen_pool * mem_pool = NULL;
  * custom allocator, and 1 if the page does not belong to the pool and
  * * the normal deallocation route needs to be followed instead. */
 
-extern int (*free_pvtpool_page) (struct page *page);
+extern struct page * (*alloc_pvtpool_page) (struct page *, unsigned long);
+extern int (*free_pvtpool_page) (struct page *);
 
 #define PROF_PROCFS_NAME                "memprofile"
 
@@ -165,6 +174,9 @@ struct Data// this is for making user virtual address from index in "page_index"
 
 extern void __clean_inval_dcache_area(void * kaddr, size_t size);
 
+extern void rec_migrate_pgtables(struct vm_area_struct *vma,
+				 new_page_t get_new_page,
+				 unsigned long private);
 
 #ifdef __arm__
 /* Adding 8 to this mask, divides cycle counter by 64 */
@@ -233,43 +245,137 @@ void enable_cpu_counters(void* data)
 	asm volatile("mcr p15, 0, %0, c9, c12, 1" :: "r"(0x8000000f));
 }
 
-int init_cpu_counter(void)
+#elif defined(__aarch64__)
+/** -- Initialization & boilerplate ---------------------------------------- */
+#define ARMV8_PMCR_MASK         0x3f
+#define ARMV8_PMCR_E            (1 << 0) /*  Enable all counters */
+#define ARMV8_PMCR_P            (1 << 1) /*  Reset all counters */
+#define ARMV8_PMCR_C            (1 << 2) /*  Cycle counter reset */
+#define ARMV8_PMCR_D            (1 << 3) /*  CCNT counts every 64th cpu cycle */
+#define ARMV8_PMCR_X            (1 << 4) /*  Export to ETM */
+#define ARMV8_PMCR_DP           (1 << 5) /*  Disable CCNT if non-invasive debug*/
+#define ARMV8_PMCR_N_SHIFT      11       /*  Number of counters supported */
+#define ARMV8_PMCR_N_MASK       0x1f
+
+#define ARMV8_PMUSERENR_EN_EL0  (1 << 0) /*  EL0 access enable */
+#define ARMV8_PMUSERENR_CR      (1 << 2) /*  Cycle counter read enable */
+#define ARMV8_PMUSERENR_ER      (1 << 3) /*  Event counter read enable */
+
+#define ARMV8_PMCNTENSET_EL0_ENABLE (1<<31) /* *< Enable Perf count reg */
+
+#define PERF_DEF_OPTS (1 | 16)
+#define PERF_OPT_RESET_CYCLES (2 | 4)
+#define PERF_OPT_DIV64 (8)
+
+static inline u32 armv8pmu_pmcr_read(void)
 {
-	DBG_PRINT(KERN_INFO "Now enabling performance counters on all cores.\n");
-	on_each_cpu(enable_cpu_counters, NULL, 1);
-	DBG_PRINT(KERN_INFO "Done.\n");
-	return 0;
+	u64 val=0;
+	asm volatile("mrs %0, pmcr_el0" : "=r" (val));
+	return (u32)val;
+}
+static inline void armv8pmu_pmcr_write(u32 val)
+{
+	val &= ARMV8_PMCR_MASK;
+	isb();
+	asm volatile("msr pmcr_el0, %0" : : "r" ((u64)val));
+}
+
+static void
+enable_cpu_counters(void* data)
+{
+	uint32_t r;
+        DBG_PRINT("enabling user-mode PMU access on CPU #%d",
+		  smp_processor_id());
+
+#if __aarch64__
+	asm volatile("mrs %0, pmuserenr_el0" : "=r"(r));
+	DBG_PRINT("pmuserenr_el0 = %d\n", r);
+
+	/*  Enable user-mode access to counters. */
+	asm volatile("msr pmuserenr_el0, %0" : : "r"((u64)ARMV8_PMUSERENR_EN_EL0|ARMV8_PMUSERENR_ER|ARMV8_PMUSERENR_CR));
+	/*  Initialize & Reset PMNC: C and P bits. */
+	armv8pmu_pmcr_write(ARMV8_PMCR_P | ARMV8_PMCR_C);
+	/* G4.4.11
+	 * PMINTENSET, Performance Monitors Interrupt Enable Set register */
+	/* cycle counter overflow interrupt request is disabled */
+	asm volatile("msr pmintenset_el1, %0" : : "r" ((u64)(0 << 31)));
+	/*   Performance Monitors Count Enable Set register bit 30:0 disable, 31 enable */
+	asm volatile("msr pmcntenset_el0, %0" : : "r" (ARMV8_PMCNTENSET_EL0_ENABLE));
+	/* start*/
+	asm volatile("msr pmevtyper0_el0, %0" : : "r" (0x19));
+
+	armv8pmu_pmcr_write(armv8pmu_pmcr_read() | ARMV8_PMCR_E);
+
+	asm volatile("mrs %0, pmuserenr_el0" : "=r"(r));
+	DBG_PRINT("pmuserenr_el0 = %d\n", r);
+
+#elif defined(__ARM_ARCH_7A__)
+        /* Enable user-mode access to counters. */
+        asm volatile("mcr p15, 0, %0, c9, c14, 0" :: "r"(1));
+        /* Program PMU and enable all counters */
+        asm volatile("mcr p15, 0, %0, c9, c12, 0" :: "r"(PERF_DEF_OPTS));
+        asm volatile("mcr p15, 0, %0, c9, c12, 1" :: "r"(0x8000000f));
+#else
+#error Unsupported Architecture
+#endif
+}
+
+static void
+disable_cpu_counters(void* data)
+{
+	uint32_t r;
+        DBG_PRINT("disabling user-mode PMU access on CPU #%d",
+		  smp_processor_id());
+
+#if __aarch64__
+	asm volatile("mrs %0, pmuserenr_el0" : "=r"(r));
+	DBG_PRINT("pmuserenr_el0 = %d\n", r);
+
+	/*  Performance Monitors Count Enable Set register bit 31:0 disable, 1 enable */
+	asm volatile("msr pmcntenset_el0, %0" : : "r" (0<<31));
+	/*  Note above statement does not really clearing register...refer to doc */
+	/*  Program PMU and disable all counters */
+	armv8pmu_pmcr_write(armv8pmu_pmcr_read() |~ARMV8_PMCR_E);
+	/*  disable user-mode access to counters. */
+	asm volatile("msr pmuserenr_el0, %0" : : "r"((u64)0));
+#elif defined(__ARM_ARCH_7A__)
+        /* Program PMU and disable all counters */
+        asm volatile("mcr p15, 0, %0, c9, c12, 0" :: "r"(0));
+        asm volatile("mcr p15, 0, %0, c9, c12, 2" :: "r"(0x8000000f));
+        /* Disable user-mode access to counters. */
+        asm volatile("mcr p15, 0, %0, c9, c14, 0" :: "r"(0));
+#else
+#error Unsupported Architecture
+#endif
 }
 #endif
 
-
-
-struct page * alloc_pool_page(struct page * page, unsigned long track_page)
+int init_cpu_counters(void)
 {
- 	void * page_va;
+	DBG_PRINT("Now enabling performance counters on all cores.\n");
+	on_each_cpu(enable_cpu_counters, NULL, 1);
+	DBG_PRINT("Done.\n");
+	return 0;
+}
 
-	if (!mem_pool)
-                return NULL;
+int reset_cpu_counters(void)
+{
+	DBG_PRINT("Now enabling performance counters on all cores.\n");
+	on_each_cpu(disable_cpu_counters, NULL, 1);
+	DBG_PRINT("Done.\n");
+	return 0;
+}
 
-	page_va = (void *)gen_pool_alloc(mem_pool, PAGE_SIZE);
+static inline void prefetchl2(const void *ptr)
+{
+	asm volatile("prfm pldl1keep, %a0\n" : : "p" (ptr));
+}
 
-        DBG_PRINT("POOL: Allocating VA: 0x%08lx\n", (unsigned long)page_va);
-
-	if (!page_va) {
-                pr_err("Unable to allocate page from colored pool.\n");
-		return NULL;
+static inline void prefetch_page(void * page_va) {
+	int i;
+	for (i = 0; i < PAGE_SIZE; i += 64) {
+		prefetch(page_va + i);
 	}
-
-	if (verbose)
-		dump_page(virt_to_page(page_va), "pool alloc debug");
-
-	/* If this page is allocated by a profiler and needs to be
-         * manually reclaimed at module teardown */
-	if (track_page)
-	        __allocd_pages[__allocd_count++] = page_va;
-
-	return virt_to_page(page_va);
-
 }
 
 static bool __addr_in_gen_pool(struct gen_pool *pool, unsigned long start,
@@ -292,6 +398,47 @@ static bool __addr_in_gen_pool(struct gen_pool *pool, unsigned long start,
         return found;
 }
 
+struct page * alloc_pool_page(struct page * page, unsigned long private)
+{
+ 	void * page_va;
+	struct pvtpool_params * params;
+
+	if (!mem_pool)
+                return NULL;
+
+	if (private == PVTPOOL_ALLOC_NOREPLACE) {
+		void * old_page_va = page_va = page_to_virt(page);
+		if(__addr_in_gen_pool(mem_pool, (unsigned long)old_page_va, PAGE_SIZE)) {
+			return page;
+		}
+	} else if (private == IS_PVTPOOL_PARAMS) {
+		params = (struct pvtpool_params *)page;
+		if ((params->vma->vm_flags & VM_ALLOC_PVT) == 0)
+			return NULL;
+	}
+
+	page_va = (void *)gen_pool_alloc(mem_pool, PAGE_SIZE);
+
+        DBG_PRINT("POOL: Allocating VA: 0x%08lx\n", (unsigned long)page_va);
+
+	if (!page_va) {
+                pr_err("Unable to allocate page from colored pool.\n");
+		return NULL;
+	}
+
+	if (verbose)
+		dump_page(virt_to_page(page_va), "pool alloc debug");
+
+	++__in_pool;
+
+	DBG_PRINT("POOL: [ALLOC] Current allocation: %d pages\n", __in_pool);
+
+	prefetch_page(page_va);
+
+	return virt_to_page(page_va);
+
+}
+
 int __my_free_pvtpool_page (struct page * page)
 {
  	void * page_va;
@@ -311,6 +458,11 @@ int __my_free_pvtpool_page (struct page * page)
 			dump_page(page, "pool dealloc debug");
 
                 gen_pool_free(mem_pool, (unsigned long)page_va, PAGE_SIZE);
+
+		--__in_pool;
+
+		DBG_PRINT("POOL: [FREE] Current allocation: %d pages\n", __in_pool);
+
 		return 0;
         }
 
@@ -491,6 +643,24 @@ long faultin_vma(struct task_struct * task, struct vm_area_struct * vma)
 	 return retval;
 }
 
+void migrate_pgtables(struct mm_struct * mm, new_page_t get_new_page,
+		      unsigned long private)
+{
+	pgd_t * pgd = mm->pgd;
+	struct page * old_pgd = virt_to_page(pgd);
+	struct page * new_pgd = get_new_page(old_pgd, private);
+
+	if (old_pgd != new_pgd) {
+		void * new_kva = page_to_virt(new_pgd);
+		memcpy(new_kva, pgd, PAGE_SIZE);
+		memcpy(new_pgd, old_pgd, sizeof(struct page));
+
+		mm->pgd = new_kva;
+		ptlock_free(old_pgd);
+		free_page((unsigned long)pgd);
+	}
+}
+
 void which_operation(struct task_struct *task, unsigned long operation,
 		     struct Data* data, int page_count)
 {
@@ -530,7 +700,10 @@ void which_operation(struct task_struct *task, unsigned long operation,
 		      pr_err("Unable to complete page migration. Ret = %d\n", err);
 
 	      DBG_PRINT("Migrating selected pages, ret = %d\n", err);
-	      //test_process_page(task,data,page_count);
+	      //test_process_page(task, data, page_count);
+#ifdef MIGRATE_PGTABLES
+	      rec_migrate_pgtables(data->vmas, alloc_pool_page, 1);
+#endif
 	}
 }
 
@@ -539,6 +712,10 @@ void vaddr_maker(struct task_struct *task, struct Data *data)
 	int j;
 	int i = data->count_vma;
 	/* Make sure the pages we need are faulted in! (mm_populate) */
+
+	if (cp.vmas[i].operation == 3)
+		data->vmas->vm_flags |= VM_ALLOC_PVT;
+
 	faultin_vma(task, data->vmas);
 
 	if (cp.vmas[i].page_count)
@@ -566,12 +743,13 @@ void vaddr_maker(struct task_struct *task, struct Data *data)
 void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *task) 
 {
 	int i = 0; /*vma_len*/
-	/*for walking on list of vmas of the process sent by user*/
+
+	/* for walking on list of vmas of the process sent by user */
 	int process_vma = 0;
 	data->mm = mm;
 	data->vmas = mm->mmap;
-	//vma_len = (data->vmas->vm_end - data->vmas->vm_start)/PAGE_SIZE;
-	DBG_PRINT("vma_numbers: %d\n",cp.vma_count);
+
+	DBG_PRINT("VMA count: %d\n", cp.vma_count);
 	/*for walking on vma arrays (cp.vmas) sent by user*/
 	for (i = 0; i < cp.vma_count ; i++)
 	{
@@ -581,8 +759,6 @@ void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *ta
 			//DBG_PRINT("user's VMA is: %d\n",cp.vmas[i].vma_index);
                         if (cp.vmas[i].vma_index == process_vma)
 			{
-				//DBG_PRINT("cp.vmas[i].vma_index:%d, process_vma:%d\n",cp.vmas[i].vma_index,process_vma);
-				//DBG_PRINT("Len of vma %d is:%d\n",process_vma,(data->vmas->vm_end - data->vmas->vm_start)/PAGE_SIZE);
 				/*checking the consistency*/
 				if (cp.vmas[i].total_pages == (unsigned int)(-1)) {
 					int k;
@@ -630,6 +806,18 @@ void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *ta
 
 		}
 	}
+
+
+#ifdef MIGRATE_PGTABLES
+	if (cp.vma_count > 0 && cp.vmas[0].operation == 2)
+	{
+		/* Pass 1 to prevent migrating pages that are already
+		 * in the pvt pool. */
+
+		migrate_pgtables(mm, alloc_pool_page, 1);
+	}
+#endif
+
 }
 
 
@@ -637,24 +825,26 @@ void get_vma (void)
 {
 	struct task_struct *task;
 	struct mm_struct *mm;
+	struct pid * pid;
 	struct Data *data = kmalloc (sizeof(struct Data), GFP_KERNEL);
-	char task_name [TASK_COMM_LEN];
-	//DBG_PRINT("start of get_vma\n");
-	for_each_process(task)
-	{
-		get_task_comm(task_name,task);
 
-		if(task->pid == cp.pid)
-		{
-			//DBG_PRINT("\n%s[%d]\n", task->comm, task->pid);
-			mm = task->mm;
-			DBG_PRINT("cp.vmas[0].page_count:%d\n",cp.vmas[0].page_count);
-			DBG_PRINT("cp.vmas[0].vma_index:%d,cp.page_index[0]:%d\n", cp.vmas[0].vma_index,cp.vmas[0].page_index[0]);
-			data->vmas = mm->mmap;
-			//DBG_PRINT("before vma_finder\n");
-			vma_finder(mm,data,task);
-		}
+	pid = find_get_pid(cp.pid);
+	task = get_pid_task(pid, PIDTYPE_PID);
+	put_pid(pid);
+
+	if (!task)
+		DBG_INFO("Unable to locate task with PID %d\n", cp.pid);
+
+	else {
+		mm = get_task_mm(task);
+		put_task_struct(task);
+
+		data->vmas = mm->mmap;
+		vma_finder(mm,data,task);
+
+		mmput(mm);
 	}
+
 	kfree(data);
 }
 
@@ -752,11 +942,9 @@ static void test_page_structs(void)
 
 static int mm_exp_load(void){
 
-        int ret;
-#ifdef __arm__
-	/* Init PMCs on all the cores */
-	init_cpu_counter();
+        int ret = -1;
 
+#ifdef __arm__
 	/*PL310 L2 cache for using those clean,invalidate funcs*/
 	//Setup the I/O memory for the PL310 cache controller
 	pl310_area = ioremap_nocache(HW_PL310_BASE, PAGE_SIZE);
@@ -788,41 +976,50 @@ static int mm_exp_load(void){
         DBG_PRINT("Remapping PRIVATE_LO reserved memory area\n");
 
         /* Setup pagemap structure to guide memremap_pages operation */
-        __pool_kva_lo = memremap(MEM_START_LO, MEM_SIZE_LO, MEMREMAP_WB);
+	if (use_lopool) {
+		__pool_kva_lo = memremap(MEM_START_LO, MEM_SIZE_LO, MEMREMAP_WB);
 
-        if (__pool_kva_lo == NULL) {
-                pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n", MEM_START_LO);
-                goto release;
-        }
+		if (__pool_kva_lo == NULL) {
+			pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n",
+			       MEM_START_LO);
+			goto release;
+		}
 
-        DBG_PRINT("Remapping PRIVATE_LO reserved memory area\n");
+		ret = 0;
+	}
 
         /* Setup pagemap structure to guide memremap_pages operation */
-        __pool_kva_hi = memremap(MEM_START_HI, MEM_SIZE_HI, MEMREMAP_WB);
+	if (use_hipool) {
+		__pool_kva_hi = memremap(MEM_START_HI, MEM_SIZE_HI, MEMREMAP_WB);
 
-        if (__pool_kva_hi == NULL) {
-                pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n", MEM_START_HI);
-                goto unmap_lo;
-        }
+		if (__pool_kva_hi == NULL) {
+			pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n",
+			       MEM_START_HI);
+			goto unmap_lo;
+		}
+
+		ret = 0;
+	}
 
 	/* Instantiate an allocation pool using the genpool subsystem */
         mem_pool = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
-        ret = gen_pool_add(mem_pool, (unsigned long)__pool_kva_lo, MEM_SIZE_LO, NUMA_NODE_THIS);
-        ret |= gen_pool_add(mem_pool, (unsigned long)__pool_kva_hi, MEM_SIZE_HI, NUMA_NODE_THIS);
+
+	if (use_lopool)
+		ret |= gen_pool_add(mem_pool, (unsigned long)__pool_kva_lo,
+				    MEM_SIZE_LO, NUMA_NODE_THIS);
+
+	if (use_hipool)
+		ret |= gen_pool_add(mem_pool, (unsigned long)__pool_kva_hi,
+				    MEM_SIZE_HI, NUMA_NODE_THIS);
 
         if (ret != 0) {
                 pr_err("Unable to initialize genalloc memory pool.\n");
                 goto unmap;
         }
 
-
-	/* Allocate space to keep track of allocated pages so that we
-         * can appropriately cleanup at module teardown. */
-        __allocd_pages = (void **)kmalloc(sizeof(void *) * MAX_PAGES, GFP_KERNEL);
-        memset(__allocd_pages, 0, sizeof(void *) * MAX_PAGES);
-
 	/* Install handler for pages released by the kernel at task completion */
         free_pvtpool_page = __my_free_pvtpool_page;
+	alloc_pvtpool_page = alloc_pool_page;
 
 	/* Run a quick sanity check on the existance of page structs
 	 * for pool area */
@@ -835,9 +1032,11 @@ static int mm_exp_load(void){
 	return 0;
 
 	unmap:
-        memunmap(__pool_kva_hi);
+	if (use_hipool)
+		memunmap(__pool_kva_hi);
 unmap_lo:
-        memunmap(__pool_kva_lo);
+	if (use_lopool)
+		memunmap(__pool_kva_lo);
 release:
         return -1;
 }
@@ -849,17 +1048,7 @@ static void mm_exp_unload(void)
 	//Release PL310 I/O memory area
 	iounmap(pl310_area);
 #endif
-
-	/* Return allocated page to the pool. */
-        if (mem_pool && __allocd_pages) {
-                int i;
-                for (i = 0; i < __allocd_count; ++i) {
-                        gen_pool_free(mem_pool, (unsigned long)__allocd_pages[i],
-                                      PAGE_SIZE);
-                }
-
-                kfree(__allocd_pages);
-        }
+	DBG_PRINT("POOL: [UNLOAD] Current allocation: %d pages\n", __in_pool);
 
 	 /* destroy genalloc memory pool */
         if (mem_pool)
@@ -873,6 +1062,7 @@ static void mm_exp_unload(void)
 
 	/* Release handler of page deallocations */
         free_pvtpool_page = NULL;
+	alloc_pvtpool_page = NULL;
 
         remove_proc_entry(PROF_PROCFS_NAME, NULL);
 
