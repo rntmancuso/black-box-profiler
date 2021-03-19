@@ -212,16 +212,31 @@ static int vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
 {
 	/* We assume that vma numbers are in increasing order */
 	static int get_anon = 1;
-	static int get_text = 0;
+	static int get_text = 1;
 	static int get_bss = 1;
 	static int get_rodata = 1;
 
-	int get_heap = 1;
-	int get_stack = 1;
+	int get_heap = (__scan_flags & SCAN_HEAP);
+	int get_stack = (__scan_flags & SCAN_STACK);
+
+	/* Preprocess scan flags */
+	if (get_anon && !(__scan_flags & SCAN_ANON))
+	    get_anon = 0;
+
+	if (get_text && !(__scan_flags & SCAN_TEXT))
+	    get_text = 0;
+
+	if (get_bss && !(__scan_flags & SCAN_BSS))
+	    get_bss = 0;
+
+	if (get_rodata && !(__scan_flags & SCAN_RODATA))
+	    get_rodata = 0;
 
 	if ((!(strcmp(vma->mappedfile,"anonymous")) && get_anon))
 	{
-		get_anon = 1; /* Get all the Anon areas */
+		if (!(__scan_flags & SCAN_ALL_ANON))
+			get_anon = 0; /* Get all the Anon areas */
+
 		add_vma(vma, vmas, vma_count);
 		return 1;
 	}
@@ -232,13 +247,15 @@ static int vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
 		return 1;
 	}
 
-	else if  (0 && !vma->executable && strstr(vma->mappedfile, "libm"))
+	else if  ((__scan_flags & SCAN_GETLIBM) &&
+		  !vma->executable && strstr(vma->mappedfile, "libm"))
 	{
 		add_vma(vma, vmas, vma_count);
 		return 1;
 	}
 
-	else if  (0 && !vma->executable && strstr(vma->mappedfile, "libc"))
+	else if  ((__scan_flags & SCAN_GETLIBC) &&
+		  !vma->executable && strstr(vma->mappedfile, "libc"))
 	{
 		add_vma(vma, vmas, vma_count);
 		return 1;
@@ -471,6 +488,60 @@ int detect_vmpeak(struct trace_params * tparams)
 	retval = run_to_exit(tparams);
 
 	tparams->run_flags |= RUN_SET_MALLOC;
+
+	return retval;
+}
+
+/* Convert the passed string of scan flags into SCAN_* flags.  
+   Acceptable string flags:
+   t -> SCAN_TEXT
+   h -> SCAN_HEAP
+   a -> SCAN_ANON (first anon VMA)
+   A -> SCAN_ALL_ANON
+   s -> SCAN_STACK
+   b -> SCAN_BSS
+   r -> SCAN_RODATA
+   m -> SCAN_GETLIBM
+   c -> SCAN_GETLIBC
+ */
+unsigned long set_scan_flags(char * param_str)
+{
+	int len = strlen(param_str);
+	unsigned long retval = 0;
+	int i;
+
+	for (i = 0; i < len; ++i) {
+		char flag = param_str[i];
+		switch (flag) {
+		case 't':
+			retval |= SCAN_TEXT;
+			break;
+		case 'h':
+			retval |= SCAN_HEAP;
+			break;
+		case 'a':
+			retval |= SCAN_ANON;
+			break;
+		case 'A':
+			retval |= SCAN_ANON | SCAN_ALL_ANON;
+			break;
+		case 's':
+			retval |= SCAN_STACK;
+			break;
+		case 'b':
+			retval |= SCAN_BSS;
+			break;
+		case 'r':
+			retval |= SCAN_RODATA;
+			break;
+		case 'm':
+			retval |= SCAN_GETLIBM;
+			break;
+		case 'c':
+			retval |= SCAN_GETLIBC;
+			break;
+		}
+	}
 
 	return retval;
 }

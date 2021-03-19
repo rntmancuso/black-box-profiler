@@ -768,7 +768,8 @@ static pid_t run_debuggee(char * program_name, char * arguments [],
 			setenv("MALLOC_MMAP_MAX_", "0", 1);
 		}
 
-		set_realtime(2, CHILD_CPU);
+		if (!__non_realtime)
+			set_realtime(2, CHILD_CPU);
 
 		/* Allow tracing of this process */
 		if (ptrace(PTRACE_TRACEME, 0, 0, 0) < 0)
@@ -1052,6 +1053,23 @@ int run_to_exit(struct trace_params * tparams)
 
 	DBG_PRINT("PID %d stopped by signal %d (%s)\n", tparams->pid,
 		  WSTOPSIG(wstat),  sys_siglist[WSTOPSIG(wstat)]);
+
+	/* The first time, it might be due to a termination signal
+	 * sent to the debuggee. Handle this nicely by allowing the
+	 * debuggee to terminate */
+	if(!WIFEXITED(wstat)) {
+		DBG_PRINT("PID %d received signal %d (%s). Continuing.\n",
+			 tparams->pid, WSTOPSIG(wstat),  sys_siglist[WSTOPSIG(wstat)]);
+
+		if(ptrace(PTRACE_CONT, tparams->pid, NULL, WSTOPSIG(wstat)) < 0) {
+			DBG_ABORT("Unable to resume from breakpoint. Exiting.");
+		}
+
+		/* The next signal we expect is when the process exits */
+		sigaddset(&waitmask, SIGCHLD);
+		sigwaitinfo(&waitmask, &info);
+		wstat = get_child_wstat();
+	}
 
 	if(!WIFEXITED(wstat)) {
 		get_PC(tparams->pid, &stopped_at);

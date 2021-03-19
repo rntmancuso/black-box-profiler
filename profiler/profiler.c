@@ -1,4 +1,4 @@
-/********************************************************************** 
+/**********************************************************************
  *                                                                    *
  *   This program can be used to acquire timing information for any   *
  *   function of a target program passed as a parameter.              *
@@ -46,6 +46,8 @@ int __do_ranking = 0;
 int __print_layout = 0;
 int __print_profile = 0;
 int __migrate_pages = -1;
+int __non_realtime = 0;
+unsigned long __scan_flags = 0;
 enum page_operation __page_op = PAGE_CACHEABLE;
 char * __save_to = NULL;
 char * __load_from = NULL;
@@ -199,6 +201,12 @@ void do_profiling(struct trace_params * tparams, struct profile * profile,
 		profile->num_samples++;
 
 		__do_profiling(tparams, profile, vma_targets, vma_count, total_pages);
+
+		if(__save_to) {
+			/* Incrementally save the profile -- each iteration might take a while */
+			save_profile(__save_to, vma_targets, vma_count, profile);
+		}
+
 	}
 }
 
@@ -272,9 +280,11 @@ void do_migration(struct trace_params * tparams, struct profile * profile,
 	build_incremental_params(profile, &migr_params, vma_targets,
 				 vma_count, num_pages);
 
-	/* Add the text VMA for migration (not propfiled by
-	 * default) */
-	params_add_unprofiled_vma(&migr_params, 0);
+	/* Add the text VMA for migration if not propfiled by
+	 * default */
+	if (!(__scan_flags & SCAN_TEXT))
+		params_add_unprofiled_vma(&migr_params, 0);
+
 	/*
 	 * params_add_unprofiled_vma(&migr_params, 3);
 	 * params_add_unprofiled_vma(&migr_params, 5);
@@ -318,6 +328,10 @@ int main(int argc, char* argv[])
 	struct profile profile;
 	int cmd_found = 0;
 
+	/* Set default VMA scan flags. These might be overridden with
+	 * the -f <flags> parameter */
+	__scan_flags = SCAN_HEAP | SCAN_STACK;
+
 	/* Parse command line parameters. Just as an example, this
 	 * program accepts a parameter -e <value> and if specified it
 	 * will print the value passed. It also accepts a parameter -s
@@ -326,10 +340,10 @@ int main(int argc, char* argv[])
 	 * end of the command line after all the optional
 	 * arguments. */
 
-	while(!cmd_found && (opt = getopt(argc, argv, "-:s:g:n:m:hvpqto:i:rl")) != -1) {
+	while(!cmd_found && (opt = getopt(argc, argv, "-:s:g:n:m:hvpqto:i:rlf:N")) != -1) {
 		switch (opt) {
 		case 'h':
-			DBG_PRINT(HELP_STRING, argv[0]);
+			DBG_INFO(HELP_STRING, argv[0]);
 			return EXIT_SUCCESS;
 			break;
 		case 'm': /* Determine the profiling mode. */
@@ -343,6 +357,10 @@ int main(int argc, char* argv[])
 		case 'l':
 			/* Perform ranking after profiling */
 			__print_layout = 1;
+			break;
+		case 'f':
+			/* Define custom VMA scan flags */
+			__scan_flags = set_scan_flags(optarg);
 			break;
 		case 'r':
 			/* Perform ranking after profiling */
@@ -387,6 +405,9 @@ int main(int argc, char* argv[])
 		case 't': /* Translate profile in uman-readable format */
 			__print_profile = 1;
 			break;
+		case 'N':
+			__non_realtime = 1;
+			break;
 		case 1:
 			cmd_found = 1;
 			optind--;
@@ -396,9 +417,6 @@ int main(int argc, char* argv[])
 			break;
 		}
 	}
-
-	/* Attempt to enable memory access counter */
-	DBG_INFO("PMU READ: %d\n", read_pmu());
 
 	/* Check that the symbol to observe has been specified */
 	if (!tparams.symbol) {
@@ -448,9 +466,11 @@ int main(int argc, char* argv[])
 	 * handling for the parent. */
 	setup_signals();
 
-	/* We are ready for some profiling. Pin the parent to a CPU
-	 * and set it to execute with real-time priority. */
-	set_realtime(3, PARENT_CPU);
+	if (!__non_realtime) {
+		/* We are ready for some profiling. Pin the parent to a CPU
+		 * and set it to execute with real-time priority. */
+		set_realtime(3, PARENT_CPU);
+	}
 
 	if (__load_from) {
 		/* Attempt to read memory layout and profile from file. */

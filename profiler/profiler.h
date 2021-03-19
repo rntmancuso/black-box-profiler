@@ -18,6 +18,8 @@
 
 extern int __run_flags;
 extern int __print_layout;
+extern int __non_realtime;
+extern unsigned long __scan_flags;
 extern enum page_operation __page_op;
 
 /* Helper macro to prefix any print statement produced by the host
@@ -61,13 +63,32 @@ extern int __verbose_output;
 	} while(0)
 
 
-#define HELP_STRING					\
-	"==== BU Black-box Cache Profiler ====\n"	\
-	"Written by: Golsana Ghaemi\n"			\
-	"            Renato Mancuso\n"			\
-	"\n"						\
-	"USAGE: %s [-h] -m <mode> -n <samples>\n"	\
-	"       -c <cacheable> -s <symbol>\n"		\
+#define HELP_STRING							\
+	"==== BU Black-box Cache Profiler ====\n"			\
+	"Written by: Golsana Ghaemi\n"					\
+	"            Renato Mancuso\n"					\
+	"            (Copyrights: Boston University)"			\
+	"\n\n"								\
+	"USAGE: %s [OPTIONS] -s <symbol> <exec.> [<exec. params>]\n\n"	\
+	"OPTIONS:\n"							\
+	"-h       \t Print this help message.\n"			\
+	"-m MODE  \t Profiling mode: c = make page cacheable, everything else non-cacheable. (default)\n" \
+	"         \t                 nc = make page non-cacheable, everything else cacheable.\n" \
+	"-l       \t Print out application's layout when scanning VMAs.\n" \
+	"-f FLAGS \t VMA scan flags: t = text, h = heap, s = stack, b = BSS, r = rodata\n" \
+	"         \t                 a = first anon, A = all anon, m = libm, c = libc\n" \
+	"         \t                 (default = hs)\n"			\
+	"-r       \t Perform page ranking. Output sent to stdout.\n"	\
+	"-o PATH  \t Save profile to file specified by PATH.\n"		\
+	"-i PATH  \t Load profile from file specified by PATH.\n"	\
+	"-p       \t Pretend mode, i.e. no kernel-side operations.\n"	\
+	"-q       \t Quiet mode, i.e. output of tracee is suppressed.\n" \
+	"-v       \t Verbose mode, i.e. show A LOT of debug messages.\n" \
+	"-n NUM   \t Number of profiling samples to acquire and aggregate (default = 1).\n" \
+	"-g NUM   \t Perform page migration. Migrate the NUM top-ranking pages.\n" \
+	"-s SYM   \t Name of target function to profile in the target executable.\n" \
+	"-t       \t Translate profile acquired or specified via -i parameter in human readable form.\n" \
+	"-N       \t Non-realtime mode: do not set real-time priorities for profiler nor tracee.\n" \
 	"\n"
 
 
@@ -83,6 +104,17 @@ extern int __verbose_output;
 #define PARENT_CPU 2 //for set_realtime
 #define CHILD_CPU 2 //for set_realtime
 #define STAGES 2
+
+/* Flags to control VMA selection */
+#define SCAN_TEXT      0x0001
+#define SCAN_HEAP      0x0002
+#define SCAN_ANON      0x0004
+#define SCAN_ALL_ANON  0x0008
+#define SCAN_STACK     0x0010
+#define SCAN_BSS       0x0020
+#define SCAN_RODATA    0x0040
+#define SCAN_GETLIBM   0x0080
+#define SCAN_GETLIBC   0x0100
 
 /* Forward declaration */
 struct vma_descr;

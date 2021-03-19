@@ -49,4 +49,18 @@ int select_vmas(struct trace_params * tparams,
 /* Find out the maximum VM size of the application. */
 int detect_vmpeak(struct trace_params * tparams);
 
+/* Convert the passed string of scan flags into SCAN_* flags.  
+   Acceptable string flags:
+   t -> SCAN_TEXT
+   h -> SCAN_HEAP
+   a -> SCAN_ANON (first anon VMA)
+   A -> SCAN_ALL_ANON
+   s -> SCAN_STACK
+   b -> SCAN_BSS
+   r -> SCAN_RODATA
+   m -> SCAN_GETLIBM
+   c -> SCAN_GETLIBC
+ */
+unsigned long set_scan_flags(char * param_str);
+
 #endif
