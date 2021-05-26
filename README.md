@@ -38,9 +38,12 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 
 1. Clone the profiler from *black-box-profiler* repo: https://github.com/rntmancuso/black-box-profiler.git
 
-2. Before compiling the profiler, you need to compile/cross-compile the elf library. For doing so, run the install_libelf.sh from profiler folder. Then compress its results and move them to the ZCU board.
+2. Before compiling the profiler, you need to compile/cross-compile the elf library. For doing so, run the install_libelf.sh from profiler folder. Then compress its results and move them to ZCU board.
 
-3. We want to compile the profiler tool on the ZCU, therefore  set `CC = gcc` and do make in the profiler folder. In case you want to corss compile the profiler, keep `CC = ${CROSS_COMPILE}gcc` and then do make. 
+3. Next step is cross-compiling the BBProf's kernel module (kprofiler) from the kernel_module folder of *black-box-profiler* repo. To do that, replace the path of custom kernel source code in  `BLDDIR = ` with your own path of the kernel source code which you have checked in part setting-up ZCU102.
+
+4. At this point the BBProf is ready to use. Profiler is supposed to be run with 2 mandatory command-line parameters which is the name of the executable binary file of the program that we want to profile and the name of the symbol at which we are interested in putting the breakpoint. The first parameter should be set as the last command-line argument and symbol is determined by -s flag. (ex: ./profiler -s f1(name of the function) hello (name of the exe).
+
 
 ### Test Page Migration
 
