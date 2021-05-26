@@ -46,7 +46,7 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 
 5.All arbitrary command-line parameters of the profiler is as the following:
       -h : Prints the help string.
-       -m : Determines the profiling mode.
+      -m : Determines the profiling mode.
        -l : By using this flag we can perform ranking after profiling.
        -f : Defines custom VMA scan flags.
        -r : Performs ranking after profiling.
