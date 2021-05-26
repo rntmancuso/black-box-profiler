@@ -44,10 +44,10 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 
 4. At this point the BBProf is ready to use. Profiler is supposed to be run with 2 mandatory command-line parameters which is the name of the executable binary file of the program that we want to profile and the name of the symbol at which we are interested in putting the breakpoint. The first parameter should be set as the last command-line argument and symbol is determined by -s flag. (ex: ./profiler -s f1(name of the function) hello (name of the exe).
 
-5.All arbitrary command-line parameters of the profiler is as the following:
-      <br>-h : Prints the help string.<br/>
-      -m : Determines the profiling mode.<br/>
-      -l : By using this flag we can perform ranking after profiling.<br/>
+5. All arbitrary command-line parameters of the profiler is as the following:
+       <br>-h : Prints the help string.<br/>
+           -m : Determines the profiling mode.<br/>
+           -l : By using this flag we can perform ranking after profiling.<br/>
       -f : Defines custom VMA scan flags.<br/>
       -r : Performs ranking after profiling.<br/>
       -o : Output profile to the file specified through this parameter.<br/>
@@ -62,7 +62,7 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
       case 1 : <br/>
 
 
-6.Run the profiler alongside with arbitrary parameters as the follow:
+6. Run the profiler alongside with arbitrary parameters as the follow:
       `./profiler -s function_name <arbitrary_parameters> exe_file arguments_of_exe`
 
 ### Test Page Migration
