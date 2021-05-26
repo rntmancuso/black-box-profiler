@@ -38,7 +38,9 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 
 1. Clone the profiler from *black-box-profiler* repo: https://github.com/rntmancuso/black-box-profiler.git
 
-2. Before compiling the profiler, you need to compile/cross-compile the elf library. For doing so, run the install_libelf.sh from profiler folder. Then compress its results and move them to ZCU board. 
+2. Before compiling the profiler, you need to compile/cross-compile the elf library. For doing so, run the install_libelf.sh from profiler folder. Then compress its results and move them to the ZCU board.
+
+3. We want to compile the profiler tool on the ZCU, therefore  set 'CC = gcc' and do make in the profiler folder. In case you want to corss compile the profiler, keep 'CC = ${CROSS_COMPILE}gcc' and then do make. 
 
 ### Test Page Migration
 
