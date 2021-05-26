@@ -48,22 +48,24 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
        <br>-h : Prints the help string.<br/>
            -m : Determines the profiling mode.<br/>
            -l : By using this flag we can perform ranking after profiling.<br/>
-      -f : Defines custom VMA scan flags.<br/>
-      -r : Performs ranking after profiling.<br/>
-      -o : Output profile to the file specified through this parameter.<br/>
-      -i : Input profile is determined through this flag.<br/>
-      -p : Pretend mode, it does everything except interaction with the kernel.<br/>
-      -q : In quiet mode, the stdout and stderr output of the traced application are suppressed.<br/>
-      -v : It is run in verbose mode.<br/>
-      -n : Number of samples.<br/>
-      -g : Determines if migration to a private pool should be performed (> 0 value) and for how many pages.<br/>
-      -t : Translate profile in human-readable format.<br/>
-      -N : non-realtime.<br/>
-      case 1 : <br/>
+           -f : Defines custom VMA scan flags.<br/>
+           -r : Performs ranking after profiling.<br/>
+           -o : Output profile to the file specified through this parameter.<br/>
+           -i : Input profile is determined through this flag.<br/>
+           -p : Pretend mode, it does everything except interaction with the kernel.<br/>
+           -q : In quiet mode, the stdout and stderr output of the traced application are suppressed.<br/>
+           -v : It is run in verbose mode.<br/>
+           -n : Number of samples.<br/>
+           -g : Determines if migration to a private pool should be performed (> 0 value) and for how many pages.<br/>
+           -t : Translate profile in human-readable format.<br/>
+           -N : non-realtime.<br/>
+           case 1 : <br/>
 
 
 6. Run the profiler alongside with arbitrary parameters as the follow:
       `./profiler -s function_name <arbitrary_parameters> exe_file arguments_of_exe`
+
+Now you are able to not only get the profile of any application but also the ranking information. The other useful operational mode is profile-driven page migration.
 
 ### Test Page Migration
 
