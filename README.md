@@ -45,21 +45,21 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 4. At this point the BBProf is ready to use. Profiler is supposed to be run with 2 mandatory command-line parameters which is the name of the executable binary file of the program that we want to profile and the name of the symbol at which we are interested in putting the breakpoint. The first parameter should be set as the last command-line argument and symbol is determined by -s flag. (ex: ./profiler -s f1(name of the function) hello (name of the exe).
 
 5.All arbitrary command-line parameters of the profiler is as the following:
-      <br>-h : Prints the help string.</br>
-      <br>-m : Determines the profiling mode.</br>
-      <br>-l : By using this flag we can perform ranking after profiling.</br>
-      <br>-f : Defines custom VMA scan flags.</br>
-      <br>-r : Performs ranking after profiling.</br>
-      <br>-o : Output profile to the file specified through this parameter.</br>
-       -i : Input profile is determined through this flag.</br>
-       -p : Pretend mode, it does everything except interaction with the kernel.</br>
-       -q : In quiet mode, the stdout and stderr output of the traced application are suppressed.</br>
-       -v : It is run in verbose mode.</br>
-       -n : Number of samples.</br>
-       -g : Determines if migration to a private pool should be performed (> 0 value) and for how many pages.</br>
-       -t : Translate profile in human-readable format.</br>
-       -N : non-realtime.</br>
-       case 1:</br>
+      -h : Prints the help string.<br/>
+      -m : Determines the profiling mode.<br/>
+      -l : By using this flag we can perform ranking after profiling.<br/>
+      -f : Defines custom VMA scan flags.<br/>
+      -r : Performs ranking after profiling.<br/>
+      -o : Output profile to the file specified through this parameter.<br/>
+       -i : Input profile is determined through this flag.<br/>
+       -p : Pretend mode, it does everything except interaction with the kernel.<br/>
+       -q : In quiet mode, the stdout and stderr output of the traced application are suppressed.<br/>
+       -v : It is run in verbose mode.<br/>
+       -n : Number of samples.<br/>
+       -g : Determines if migration to a private pool should be performed (> 0 value) and for how many pages.<br/>
+       -t : Translate profile in human-readable format.<br/>
+       -N : non-realtime.<br/>
+       case 1:<br/>
 
 
 6.Run the profiler alongside with arbitrary parameters as the follow:
