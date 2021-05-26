@@ -34,6 +34,12 @@ Follow the steps below to compile and deploy the custom Linux kernel and DTB.
 
 That's it! The board should be able to boot now. Notice that the *boot.scr* is set up so to start the kernel using the `/dev/mmcblk0p2` partition of the sd-card as the root filesystem.
 
+### Setting-up the Black-box profiler
+
+1. Clone the profiler from *black-box-profiler* repo: https://github.com/rntmancuso/black-box-profiler.git
+
+2. Before compiling the profiler, you need to compile/cross-compile the elf library. For doing so, run the install_libelf.sh from profiler folder. Then compress its results and move them to ZCU board. 
+
 ### Test Page Migration
 
 Before even deploying the Jailhouse hypervisor, let's use our synthetic task to test that page migration works correctly.
