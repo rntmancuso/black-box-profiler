@@ -46,7 +46,7 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 
 5. All arbitrary command-line parameters of the profiler is as the following:
        <br>-h : Prints the help string.<br/>
-           -m MODE : Profiling mode: c = make page cacheable, everything else non-cacheable.(default)  <br/>
+           -m MODE : Profiling mode: c = make page cacheable, everything else non-cacheable.(default)<br  />
 	   nc = make page non-cacheable, everything else cacheable.<br/>
            -l : Print out application's layout when scanning VMAs.<br/>
            -f : Defines custom VMA scan flags.<br/>
