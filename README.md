@@ -61,7 +61,15 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 	[DBG] [  0]    00400000-00401000 r-xp 00000000 b3:02 3585                               /home/root/two_loops
         [DBG] [  1]    00410000-00411000 rw-p 00000000 b3:02 3585                               /home/root/two_loops
         [DBG] [  2] *  1f0ed000-1f1b0000 rw-p 00000000 00:00 0                                  [heap]
-	
+        [DBG] [  3]    7fa3061000-7fa318c000 r-xp 00000000 b3:02 784937                         /lib/libc-2.23.so
+        [DBG] [  4]    7fa318c000-7fa319b000 ---p 0012b000 b3:02 784937                         /lib/libc-2.23.so
+        [DBG] [  5]    7fa319b000-7fa319f000 r--p 0012a000 b3:02 784937                         /lib/libc-2.23.so
+        [DBG] [  6]    7fa319f000-7fa31a1000 rw-p 0012e000 b3:02 784937                         /lib/libc-2.23.so
+	[DBG] [  7]    7fa31a1000-7fa31a5000 rw-p 00000000 00:00 0 
+        [DBG] [  8]    7fa31a5000-7fa31c1000 r-xp 00000000 b3:02 785052                         /lib/ld-2.23.so
+        [DBG] [  9]    7fa31ca000-7fa31cb000 rw-p 00000000 00:00 0 
+        [DBG] [ 10]    7fa31cd000-7fa31ce000 rw-p 00000000 00:00 0 
+
 	[DBG] [ 11]    7fa31ce000-7fa31cf000 r--p 00000000 00:00 0                              [vvar]
 	[DBG] [ 12]    7fa31cf000-7fa31d0000 r-xp 00000000 00:00 0                              [vdso]
 	[DBG] [ 13]    7fa31d0000-7fa31d1000 r--p 0001b000 b3:02 785052                         /lib/ld-2.23.so
