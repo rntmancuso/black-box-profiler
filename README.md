@@ -43,12 +43,11 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 3. Next step is cross-compiling the BBProf's kernel module (kprofiler) from the kernel_module folder of *black-box-profiler* repo. To do that, replace the path of custom kernel source code in  `BLDDIR = ` with your own path of the kernel source code which you have checked in part setting-up ZCU102.
 
 4. At this point the BBProf is ready to use. Profiler is supposed to be run with 2 mandatory command-line parameters which is the name of the executable binary file of the program that we want to profile and the name of the symbol at which we are interested in putting the breakpoint. The first parameter should be set as the last command-line argument and symbol is determined by -s flag. (ex: ./profiler -s f1(name of the function) hello (name of the exe).
-The action of every agent <br />
-  into the world <br />
+
 5. All arbitrary command-line parameters of the profiler is as the following:
        <br>-h : Prints the help string.<br/>
-           -m MODE : Profiling mode: c = make page cacheable, everything else non-cacheable.(default)<br  />
-	            <pre>nc = make page non-cacheable, everything else cacheable.</pre><br/>
+           -m MODE : Profiling mode: c = make page cacheable, everything else non-cacheable.(default)
+	             	       	     nc = make page non-cacheable, everything else cacheable.<br/>
            -l : Print out application's layout when scanning VMAs.<br/>
            -f : Defines custom VMA scan flags.<br/>
            -r : Performs ranking after profiling.<br/>
