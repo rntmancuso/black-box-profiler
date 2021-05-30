@@ -63,7 +63,11 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
            -g NUM : Perform page migration. Migrate the NUM top-ranking pages.<br/>
            -t : Translate profile acquired or specified via -i parameter in human readable form..<br/>
            -N : Non-realtime mode: do not set real-time priorities for profiler nor tracee.<br/>
-In the example below, loop is the name of function (symbol) we put the breakpoint at, two_loops is the name of executable binary of the process, -l prints the virtual memory layout of the process, the profile is saved in two_loops_layout.prof. Two * show that among VMAs, heap and stack are scanned
+
+6. Run the profiler alongside with arbitrary parameters as the follow:
+      `./profiler -s function_name <arbitrary_parameters> exe_file arguments_of_exe`
+
+In the example below, loop is the name of function (symbol) we put the breakpoint at, two_loops is the name of executable binary of the process, -l prints the virtual memory layout of the process, the profile is saved in two_loops_layout.prof. Two * show that among VMAs, heap and stack are scanned.
 ```
 	./profiler -o two_loops_layout.prof -l -s loop two_loops
 	[DBG] Command to execute: [two_loops]
@@ -89,20 +93,7 @@ In the example below, loop is the name of function (symbol) we put the breakpoin
 	[DBG] Profile written to two_loops_layout.prof. Total size: 7376 bytes
 	[DBG] Profile written to two_loops_layout.prof. Total size: 7376 bytes~
 ```
-
-  -i PATH : Load profile from file specified by PATH.<br/>
-  -p : Pretend mode, i.e. no kernel-side operations.<br/>
-  -q : Quiet mode, i.e. output of tracee is suppressed.<br/>
-  -v : Verbose mode, i.e. show A LOT of debug messages.<br/>
-  -n NUM : Number of profiling samples to acquire and aggregate (default = 1).<br/>
-  -g NUM : Perform page migration. Migrate the NUM top-ranking pages.<br/>
-  -t : Translate profile acquired or specified via -i parameter in human readable form..<br/>
-  -N : Non-realtime mode: do not set real-time priorities for profiler nor tracee.<br/>
       
-
-
-6. Run the profiler alongside with arbitrary parameters as the follow:
-      `./profiler -s function_name <arbitrary_parameters> exe_file arguments_of_exe`
 
 Now you are able to not only get the profile of any application but also the ranking information. The other useful operational mode is profile-driven page migration.
 
