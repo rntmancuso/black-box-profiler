@@ -55,7 +55,7 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
            -r : Perform page ranking. Output sent to stdout.<br/>
 	   -s SYM : Name of target function to profile in the target executable.<br/>
            -o PATH : Save profile to file specified by PATH.<br/>
-`
+````
 	./profiler -o two_loops_layout.prof -l -s loop two_loops
 	[DBG] Command to execute: [two_loops]
 	[DBG] [  0]    00400000-00401000 r-xp 00000000 b3:02 3585                               /home/root/two_loops
@@ -70,7 +70,7 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 	[DBG] PROFILING: Collecting sample 1 of 1
 	PROFILING: [####################################################################################################] (228/228)
 	[DBG] Profile written to two_loops_layout.prof. Total size: 7376 bytes
-	[DBG] Profile written to two_loops_layout.prof. Total size: 7376 bytes~`
+	[DBG] Profile written to two_loops_layout.prof. Total size: 7376 bytes~````
 
            -i PATH : Load profile from file specified by PATH.<br/>
            -p : Pretend mode, i.e. no kernel-side operations.<br/>
