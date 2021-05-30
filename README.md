@@ -73,9 +73,10 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 	[DBG] Profile written to two_loops_layout.prof. Total size: 7376 bytes~
 
 ```
-<br\>
- -i PATH : Load profile from file specified by PATH.<br/>
-           -p : Pretend mode, i.e. no kernel-side operations.<br/>
+
+
+-i PATH : Load profile from file specified by PATH.<br/>
+  -p : Pretend mode, i.e. no kernel-side operations.<br/>
            -q : Quiet mode, i.e. output of tracee is suppressed.<br/>
            -v : Verbose mode, i.e. show A LOT of debug messages.<br/>
            -n NUM : Number of profiling samples to acquire and aggregate (default = 1).<br/>
