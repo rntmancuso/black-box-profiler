@@ -55,6 +55,15 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
            -r : Perform page ranking. Output sent to stdout.<br/>
 	   -s SYM : Name of target function to profile in the target executable.<br/>
            -o PATH : Save profile to file specified by PATH.<br/>
+	   -i PATH : Load profile from file specified by PATH.<br/>
+           -p : Pretend mode, i.e. no kernel-side operations.<br/>
+           -q : Quiet mode, i.e. output of tracee is suppressed.<br/>
+           -v : Verbose mode, i.e. show A LOT of debug messages.<br/>
+           -n NUM : Number of profiling samples to acquire and aggregate (default = 1).<br/>
+           -g NUM : Perform page migration. Migrate the NUM top-ranking pages.<br/>
+           -t : Translate profile acquired or specified via -i parameter in human readable form..<br/>
+           -N : Non-realtime mode: do not set real-time priorities for profiler nor tracee.<br/>
+In the example below, loop is the name of function (symbol) we put the breakpoint at, two_loops is the name of executable binary of the process, -l prints the virtual memory layout of the process, the profile is saved in two_loops_layout.prof. Two * show that among VMAs, heap and stack are scanned
 ```
 	./profiler -o two_loops_layout.prof -l -s loop two_loops
 	[DBG] Command to execute: [two_loops]
