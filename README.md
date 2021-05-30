@@ -53,14 +53,31 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 	                              a = first anon, A = all anon, m = libm, c = libc<br/>
 				      (default = hs)<br/>
            -r : Perform page ranking. Output sent to stdout.<br/>
-           -o PATH : Save profile to file specified by PATH..<br/>
+	   -s SYM : Name of target function to profile in the target executable.<br/>
+           -o PATH : Save profile to file specified by PATH.<br/>
+````
+	./profiler -o two_loops_layout.prof -l -s loop two_loops
+	[DBG] Command to execute: [two_loops]
+	[DBG] [  0]    00400000-00401000 r-xp 00000000 b3:02 3585                               /home/root/two_loops
+        [DBG] [  1]    00410000-00411000 rw-p 00000000 b3:02 3585                               /home/root/two_loops
+        [DBG] [  2] *  1f0ed000-1f1b0000 rw-p 00000000 00:00 0                                  [heap]
+	
+	[DBG] [ 11]    7fa31ce000-7fa31cf000 r--p 00000000 00:00 0                              [vvar]
+	[DBG] [ 12]    7fa31cf000-7fa31d0000 r-xp 00000000 00:00 0                              [vdso]
+	[DBG] [ 13]    7fa31d0000-7fa31d1000 r--p 0001b000 b3:02 785052                         /lib/ld-2.23.so
+	[DBG] [ 14]    7fa31d1000-7fa31d3000 rw-p 0001c000 b3:02 785052                         /lib/ld-2.23.so
+	[DBG] [ 15] *  7fe57a7000-7fe57c8000 rw-p 00000000 00:00 0                              [stack]
+	[DBG] PROFILING: Collecting sample 1 of 1
+	PROFILING: [####################################################################################################] (228/228)
+	[DBG] Profile written to two_loops_layout.prof. Total size: 7376 bytes
+	[DBG] Profile written to two_loops_layout.prof. Total size: 7376 bytes~
+````
            -i PATH : Load profile from file specified by PATH.<br/>
            -p : Pretend mode, i.e. no kernel-side operations.<br/>
            -q : Quiet mode, i.e. output of tracee is suppressed.<br/>
            -v : Verbose mode, i.e. show A LOT of debug messages.<br/>
            -n NUM : Number of profiling samples to acquire and aggregate (default = 1).<br/>
            -g NUM : Perform page migration. Migrate the NUM top-ranking pages.<br/>
-	   -s SYM : Name of target function to profile in the target executable.<br/>
            -t : Translate profile acquired or specified via -i parameter in human readable form..<br/>
            -N : Non-realtime mode: do not set real-time priorities for profiler nor tracee.<br/>
       
