@@ -69,7 +69,7 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 
 In the example below, loop is the name of function (symbol) we put the breakpoint at, two_loops is the name of executable binary of the process, -l prints the virtual memory layout of the process, the profile is saved in two_loops_layout.prof. Two * show that among VMAs, heap and stack are scanned.
 ```
-	./profiler -o two_loops_layout.prof -l -s loop two_loops
+./profiler -o two_loops_layout.prof -l -s loop two_loops
 	[DBG] Command to execute: [two_loops]
 	[DBG] [  0]    00400000-00401000 r-xp 00000000 b3:02 3585                               /home/root/two_loops
         [DBG] [  1]    00410000-00411000 rw-p 00000000 b3:02 3585                               /home/root/two_loops
