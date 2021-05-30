@@ -45,7 +45,7 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 4. At this point the BBProf is ready to use. Profiler is supposed to be run with 2 mandatory command-line parameters which is the name of the executable binary file of the program that we want to profile and the name of the symbol at which we are interested in putting the breakpoint. The first parameter should be set as the last command-line argument and symbol is determined by -s flag. (ex: ./profiler -s f1(name of the function) hello (name of the exe).
 
 5. As an example, we consider synthetic benchmrk *two_synthetic*, example of running this benchmark with different arbitrary command-line parameters of the profiler is as the following:<br/>
-       <br>-h : Prints the help string.<br/>
+<br>-h : Prints the help string.<br/>
            -m MODE : Profiling mode: c = make page cacheable, everything else non-cacheable.(default)
 	           nc = make page non-cacheable, everything else cacheable.<br/>
            -l : Print out application's layout when scanning VMAs.<br/>
@@ -74,7 +74,7 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 
 ```
 
-     -i PATH : Load profile from file specified by PATH.<br/>
+-i PATH : Load profile from file specified by PATH.<br/>
            -p : Pretend mode, i.e. no kernel-side operations.<br/>
            -q : Quiet mode, i.e. output of tracee is suppressed.<br/>
            -v : Verbose mode, i.e. show A LOT of debug messages.<br/>
