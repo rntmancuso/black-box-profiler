@@ -47,20 +47,23 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 5. All arbitrary command-line parameters of the profiler is as the following:
        <br>-h : Prints the help string.<br/>
            -m MODE : Profiling mode: c = make page cacheable, everything else non-cacheable.(default)
-	   &nbsp nc = make page non-cacheable, everything else cacheable.<br/>
+	           nc = make page non-cacheable, everything else cacheable.<br/>
            -l : Print out application's layout when scanning VMAs.<br/>
-           -f : Defines custom VMA scan flags.<br/>
-           -r : Performs ranking after profiling.<br/>
-           -o : Output profile to the file specified through this parameter.<br/>
-           -i : Input profile is determined through this flag.<br/>
-           -p : Pretend mode, it does everything except interaction with the kernel.<br/>
-           -q : In quiet mode, the stdout and stderr output of the traced application are suppressed.<br/>
-           -v : It is run in verbose mode.<br/>
-           -n : Number of samples.<br/>
-           -g : Determines if migration to a private pool should be performed (> 0 value) and for how many pages.<br/>
-           -t : Translate profile in human-readable format.<br/>
-           -N : non-realtime.<br/>
-           case 1 : <br/>
+           -f FLAGS : VMA scan flags: t = text, h = heap, s = stack, b = BSS, r = rodata.<br/>
+	                              a = first anon, A = all anon, m = libm, c = libc<br/>
+				      (default = hs)<br/>
+           -r : Perform page ranking. Output sent to stdout.<br/>
+           -o PATH : Save profile to file specified by PATH..<br/>
+           -i PATH : Load profile from file specified by PATH.<br/>
+           -p : Pretend mode, i.e. no kernel-side operations.<br/>
+           -q : Quiet mode, i.e. output of tracee is suppressed.<br/>
+           -v : Verbose mode, i.e. show A LOT of debug messages.<br/>
+           -n NUM : Number of profiling samples to acquire and aggregate (default = 1).<br/>
+           -g NUM : Perform page migration. Migrate the NUM top-ranking pages.<br/>
+	   -s SYM : Name of target function to profile in the target executable.<br/>
+           -t : Translate profile acquired or specified via -i parameter in human readable form..<br/>
+           -N : Non-realtime mode: do not set real-time priorities for profiler nor tracee.<br/>
+      
 
 
 6. Run the profiler alongside with arbitrary parameters as the follow:
