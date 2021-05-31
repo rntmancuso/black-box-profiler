@@ -155,6 +155,84 @@ In the third example, with -r parameter the profile information is ranked andd s
       [DBG] 18, C: 17941902	M: 994
       ...
 ```
+
+Forth example depicts the effect of using  -v flag which is profiling in the verbose mode. Below you can see all debug messages for only one round of profiling for just one specific page.
+```
+
+./profiler -v -o two_loops_rank.prof -s loop two_loops
+     [DBG] Timing function loop
+     [DBG] Command to execute: [two_loops]
+     [DBG] Found symbol [loop]. Address = 0x400570
+     [DBG] Executing tracee on CPU 2 (flags = 0x0)
+     [DBG] Waitpid() returned PID = 18683
+     [DBG] PID 18683 stopped by signal 5 (Trace/breakpoint trap)
+     [DBG] Setting a breakpoint at 0x400570 (data: 0xf90007e0d10083ff)
+     [DBG] Waitpid() returned PID = 18683
+     [DBG] PID 18683 stopped by signal 4 (Illegal instruction)
+     [DBG] Done setting the program counter
+
+     [DBG] Setting a breakpoint at 0x4006a8 (data: 0xd53be040f9004bbf)
+     [DBG] Traced function set to return to 0x4006a8
+     [DBG] Waitpid() returned PID = 18683
+     [DBG] PID 18683 stopped by signal 4 (Illegal instruction)
+     [DBG] VmData: 728
+     [DBG] TIMING: function [loop] took 2845876 CPU cycles
+     [DBG] Done setting the program counter
+
+     [DBG] Waitpid() returned PID = 18683
+     [DBG] PID 18683 stopped by signal 0 ((null))
+     [DBG] PID 18683 exited.
+     [DBG] NOTE: setting MALLOC_TOP_PAD_ to 745472.
+     [DBG] Executing tracee on CPU 2 (flags = 0x2)
+     [DBG] Waitpid() returned PID = 18684
+     [DBG] PID 18684 stopped by signal 5 (Trace/breakpoint trap)
+     [DBG] Setting a breakpoint at 0x400570 (data: 0xf90007e0d10083ff)
+     [DBG] Waitpid() returned PID = 18684
+
+     ...
+
+     [DBG] Setting a breakpoint at 0x4006a8 (data: 0xd53be040f9004bbf)
+     [DBG] Traced function set to return to 0x4006a8
+     [DBG] Waitpid() returned PID = 18684
+     [DBG] PID 18684 stopped by signal 4 (Illegal instruction)
+     [DBG] TIMING: function [loop] took 2914169 CPU cycles
+     [DBG] Done setting the program counter
+
+     [DBG] Waitpid() returned PID = 18684
+     [DBG] PID 18684 stopped by signal 0 ((null))
+     [DBG] PID 18684 exited.
+     [DBG] PROFILING: Collecting sample 1 of 3
+     [DBG] NOTE: setting MALLOC_TOP_PAD_ to 745472.
+     [DBG] Executing tracee on CPU 2 (flags = 0x2)
+     [DBG] Waitpid() returned PID = 18685
+     [DBG] PID 18685 stopped by signal 5 (Trace/breakpoint trap)
+     [DBG] Setting a breakpoint at 0x400570 (data: 0xf90007e0d10083ff)
+     [DBG] Waitpid() returned PID = 18685
+     [DBG] PID 18685 stopped by signal 4 (Illegal instruction)
+     [DBG] 
+
+     ----------------- KPARAMS -----------------
+     [DBG] PID  : 	18685
+     [DBG] #VMAS: 	2
+     [DBG] ========== (0/2) VMA index: 2 ==========
+     [DBG] Index     :	2
+     [DBG] Tot. Pages:	195
+     [DBG] Op.  Pages:	1
+     [DBG] Operation :	0
+     [DBG] Page list :
+     [DBG] 	000) +0x0000
+     [DBG] ========== (1/2) VMA index: 15 ==========
+     [DBG] Index     :	15
+     [DBG] Tot. Pages:	33
+     [DBG] Op.  Pages:	0
+     [DBG] Operation :	0
+     [DBG] Page list :
+     [DBG] 
+    -------------------------------------------
+    [DBG] Kernel interaction completed.
+    [DBG] Done setting the program counter
+```
+
 Now you are able to not only get the profile of any application but also the ranking information. The other useful operational mode is profile-driven page migration.
 
 ### Test Page Migration
