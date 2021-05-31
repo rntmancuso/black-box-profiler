@@ -94,6 +94,35 @@ In the example below, loop is the name of function (symbol) we put the breakpoin
 	[DBG] Profile written to two_loops_layout.prof. Total size: 7376 bytes~
 ```
       
+In the second example, -t parametr translates the profile information to the human-readable format.
+```
+./profiler -t -o two_loops_verbose.prof -s loop two_loops
+       [DBG] Command to execute: [two_loops]
+       [DBG] PROFILING: Collecting sample 1 of 1
+       PROFILING: [####################################################################################################] (228/228)
+       [DBG] Profile written to two_loops_verbose.prof. Total size: 7376 bytes
+       [DBG] Profile written to two_loops_verbose.prof. Total size: 7376 bytes
+       [DBG] 
+       ----------------- PROFILE (1 samples) -----------------
+       [DBG] heap_pad = 728
+       [DBG] ========== (0/2) VMA index: 2 ==========
+       [DBG] PAGE: 0x000b	CYCLES: max: 59497177	min: 59497177	avg: 59497177.000000
+       [DBG] PAGE: 0x0002	CYCLES: max: 59565874	min: 59565874	avg: 59565874.000000
+       [DBG] PAGE: 0x0096	CYCLES: max: 59709451	min: 59709451	avg: 59709451.000000
+       [DBG] PAGE: 0x0010	CYCLES: max: 59736791	min: 59736791	avg: 59736791.000000
+       [DBG] PAGE: 0x0027	CYCLES: max: 59785253	min: 59785253	avg: 59785253.000000
+       [DBG] PAGE: 0x00ba	CYCLES: max: 59850656	min: 59850656	avg: 59850656.000000
+       [DBG] PAGE: 0x0005	CYCLES: max: 59863999	min: 59863999	avg: 59863999.000000
+       [DBG] PAGE: 0x000a	CYCLES: max: 59872283	min: 59872283	avg: 59872283.000000
+       [DBG] PAGE: 0x008a	CYCLES: max: 59933988	min: 59933988	avg: 59933988.000000
+       [DBG] PAGE: 0x000e	CYCLES: max: 59954842	min: 59954842	avg: 59954842.000000
+       [DBG] PAGE: 0x0009	CYCLES: max: 59962777	min: 59962777	avg: 59962777.000000
+       [DBG] PAGE: 0x008c	CYCLES: max: 59981105	min: 59981105	avg: 59981105.000000
+       [DBG] PAGE: 0x0088	CYCLES: max: 59986433	min: 59986433	avg: 59986433.000000
+       [DBG] PAGE: 0x0018	CYCLES: max: 59991245	min: 59991245	avg: 59991245.000000
+       [DBG] PAGE: 0x0060	CYCLES: max: 60015186	min: 60015186	avg: 60015186.000000
+       ...
+```
 
 Now you are able to not only get the profile of any application but also the ranking information. The other useful operational mode is profile-driven page migration.
 
