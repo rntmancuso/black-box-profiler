@@ -124,6 +124,37 @@ In the second example, -t parametr translates the profile information to the hum
        ...
 ```
 
+In the third example, with -r parameter the profile information is ranked andd shown in the standard output:
+```
+./profiler -r -o two_loops_rank.prof -s loop two_loops
+      [DBG] Command to execute: [two_loops]
+      [DBG] PROFILING: Collecting sample 1 of 1
+      PROFILING: [####################################################################################################] (228/228)
+      [DBG] Profile written to two_loops_rank.prof. Total size: 7376 bytes
+      [DBG] Profile written to two_loops_rank.prof. Total size: 7376 bytes
+      RANKING: [####################################################################################################] (228/228)
+      [DBG]
+      RANKED TIMING:
+      [DBG] 1, C: 61467409	M: 158
+      [DBG] 2, C: 61094036	M: 160
+      [DBG] 3, C: 20009349	M: 125
+      [DBG] 4, C: 19941346	M: 130
+      [DBG] 5, C: 19248420	M: 255
+      [DBG] 6, C: 19270093	M: 323
+      [DBG] 7, C: 19192718	M: 370
+      [DBG] 8, C: 18546387	M: 359
+      [DBG] 9, C: 18431164	M: 487
+      [DBG] 10, C: 18374773	M: 555
+      [DBG] 11, C: 18309513	M: 636
+      [DBG] 12, C: 18242713	M: 616
+      [DBG] 13, C: 18268441	M: 602
+      [DBG] 14, C: 18220233	M: 657
+      [DBG] 15, C: 18187028	M: 759
+      [DBG] 16, C: 18098127	M: 792
+      [DBG] 17, C: 18016254	M: 811
+      [DBG] 18, C: 17941902	M: 994
+      ...
+```
 Now you are able to not only get the profile of any application but also the ranking information. The other useful operational mode is profile-driven page migration.
 
 ### Test Page Migration
