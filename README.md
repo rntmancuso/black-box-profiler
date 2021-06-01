@@ -38,13 +38,13 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 
 1. Clone the profiler from *black-box-profiler* repo: https://github.com/rntmancuso/black-box-profiler.git
 
-2. Before compiling the profiler on the ZCU, you need to either cross-compile the elf library or decompressing the pre-compiled library. For the former, run the install_libelf.sh from the profiler folder. For the later, decompress the *zcu_elflib.tar.gz* on the ZCU and add it to the Makefile for the profiler compilation. It is added as *libs *as the following in the Makefile: `CFLAGS=-I. -W -Wall -I./libs/include/ -D_VERBOSE_`, `LDFLAGS=-lelf -L./libs/lib/ -lz`
+2. Before compiling the profiler on the ZCU, you need to either cross-compile the elf library or decompress the pre-compiled library. For the former, run the install_libelf.sh from the profiler folder on Ubuntu. For the later, decompress the *zcu_elflib.tar.gz* on the ZCU and add it to the Makefile for the profiler compilation. It is added as *libs* as the following in the Makefile: `CFLAGS=-I. -W -Wall -I./libs/include/ -D_VERBOSE_`, and `LDFLAGS=-lelf -L./libs/lib/ -lz`
 
-3. Next step is cross-compiling the BBProf's kernel module (kprofiler) from the kernel_module folder of *black-box-profiler* repo. To do that, replace the path of custom kernel source code in  `BLDDIR = ` with your own path of the kernel source code which you have checked in part setting-up ZCU102.
+3. Next step is cross-compiling the BBProf's kernel module (aarch64_kmod) from the kernel_module folder of the  *black-box-profiler* repo. To do that, replace the path of custom kernel source code in  `BLDDIR = ` with your own path of the kernel source code which you have checked out in the setting-up ZCU102.
 
-4. At this point the BBProf is ready to use. Profiler is supposed to be run with 2 mandatory command-line parameters which is the name of the executable binary file of the program that we want to profile and the name of the symbol at which we are interested in putting the breakpoint. The first parameter should be set as the last command-line argument and symbol is determined by -s flag. (ex: ./profiler -s f1(name of the function) hello (name of the exe).
+4. At this point the BBProf is ready to use. Profiler is supposed to be run with 2 mandatory command-line parameters. One of them is the name of the executable binary file of the program that we want to profile and the second one is the name of the symbol which we are interested in putting the breakpoint at. The first parameter should be set as the last command-line argument and symbol is determined by -s flag. (ex: ./profiler -s f1(name of the function) hello (name of the exe).
 
-5. As an example, we consider synthetic benchmrk *two_synthetic*, example of running this benchmark with different arbitrary command-line parameters of the profiler is as the following:<br/>
+5. As an example, we consider synthetic benchmrk *two_loops* and run it  with different command-line parameters of the profiler which are listed as the following:<br/>
 <br>-h : Prints the help string.<br/>
            -m MODE : Profiling mode: c = make page cacheable, everything else non-cacheable.(default)
 	           nc = make page non-cacheable, everything else cacheable.<br/>
@@ -64,8 +64,6 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
            -t : Translate profile acquired or specified via -i parameter in human readable form..<br/>
            -N : Non-realtime mode: do not set real-time priorities for profiler nor tracee.<br/>
 
-6. Run the profiler alongside with arbitrary parameters as the follow:
-      `./profiler -s function_name <arbitrary_parameters> exe_file arguments_of_exe`
 
 In the example below, loop is the name of function (symbol) we put the breakpoint at, two_loops is the name of executable binary of the process, -l prints the virtual memory layout of the process, the profile is saved in two_loops_layout.prof. Two * show that among VMAs, heap and stack are scanned.
 ```
@@ -124,7 +122,7 @@ In the second example, -t parametr translates the profile information to the hum
        ...
 ```
 
-In the third example, with -r parameter the profile information is ranked andd shown in the standard output:
+In the third example, with -r parameter the profile information is ranked and shown in the standard output:
 ```
 ./profiler -r -o two_loops_rank.prof -s loop two_loops
       [DBG] Command to execute: [two_loops]
@@ -156,7 +154,7 @@ In the third example, with -r parameter the profile information is ranked andd s
       ...
 ```
 
-Forth example depicts the effect of using  -v flag which is profiling in the verbose mode. Below you can see all debug messages for only one round of profiling for just one specific page.
+Forth example depicts the effect of using -v flag which is profiling in the verbose mode. Below you can see all debug messages for only one round of profiling for just one specific page.
 ```
 
 ./profiler -v -o two_loops_rank.prof -s loop two_loops
