@@ -38,11 +38,11 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 
 1. Clone the profiler from *black-box-profiler* repo: https://github.com/rntmancuso/black-box-profiler.git
 
-2. Before compiling the profiler on the ZCU, you need to either cross-compile the elf library or decompress the pre-compiled library. For the former, run the install_libelf.sh from the profiler folder on Ubuntu. For the later, decompress the *zcu_elflib.tar.gz* on the ZCU and add it to the Makefile for the profiler compilation. It is added as *libs* as the following in the Makefile: `CFLAGS=-I. -W -Wall -I./libs/include/ -D_VERBOSE_`, and `LDFLAGS=-lelf -L./libs/lib/ -lz`
+2. Before compiling the profiler on the ZCU, you need to either cross-compile the elf library or decompress the pre-compiled library. For the former, run the install_libelf.sh from the profiler folder on Ubuntu. For the latter, decompress the *zcu_elflib.tar.gz* on the ZCU using `tar -xvf zcu_elflib.tar.gz` and add it to the Makefile for the profiler compilation. It is added as *libs* as the following in the Makefile: `CFLAGS=-I. -W -Wall -I./libs/include/ -D_VERBOSE_`, and `LDFLAGS=-lelf -L./libs/lib/ -lz`
 
-3. Next step is cross-compiling the BBProf's kernel module (aarch64_kmod) from the kernel_module folder of the  *black-box-profiler* repo. To do that, replace the path of custom kernel source code in  `BLDDIR = ` with your own path of the kernel source code which you have checked out in the setting-up ZCU102.
+3. Next step is cross-compiling the BBProf's kernel module (aarch64_kmod.c) from the kernel_module folder of the  *black-box-profiler* repo. To do that, replace the path of custom kernel source code in  `BLDDIR = ` with your own path of the kernel source code which you have checked out in the setting-up ZCU102.
 
-4. At this point the BBProf is ready to use. Profiler is supposed to be run with 2 mandatory command-line parameters. One of them is the name of the executable binary file of the program that we want to profile and the second one is the name of the symbol which we are interested in putting the breakpoint at. The first parameter should be set as the last command-line argument and symbol is determined by -s flag. (ex: ./profiler -s f1(name of the function) hello (name of the exe).
+4. At this point the BBProf is ready to use. Profiler is supposed to be run with 2 mandatory command-line parameters. One of them is the name of the executable binary file of the program that we want to profile and the second one is the name of the symbol which we are interested in putting the breakpoint at. The first parameter should be set as the last command-line argument and symbol is determined by -s flag. (ex: `./profiler -s f1(name of the function) hello (name of the exe)`.)
 
 5. As an example, we consider synthetic benchmrk *two_loops* and run it  with different command-line parameters of the profiler which are listed as the following:<br/>
 <br>-h : Prints the help string.<br/>
@@ -65,7 +65,7 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
            -N : Non-realtime mode: do not set real-time priorities for profiler nor tracee.<br/>
 
 
-In the example below, loop is the name of function (symbol) we put the breakpoint at, two_loops is the name of executable binary of the process, -l prints the virtual memory layout of the process, the profile is saved in two_loops_layout.prof. Two * show that among VMAs, heap and stack are scanned.
+In the example below, loop is the name of function (symbol) we put the breakpoint at, two_loops is the name of executable binary of the process, -l prints the virtual memory layout of the process, the profile is saved in two_loops_layout.prof. Two * show that among all VMAs, heap and stack are scanned.
 ```
 ./profiler -o two_loops_layout.prof -l -s loop two_loops
 	[DBG] Command to execute: [two_loops]
