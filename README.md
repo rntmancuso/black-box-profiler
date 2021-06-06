@@ -24,7 +24,7 @@ Follow the steps below to compile and deploy the custom Linux kernel and DTB.
 
 7. Compile the kernel! If you have 4 cores, move to the kernel sources directory and run: `make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image -j 4`
 
-8. If the compilation is successful, you will find the file *arch/arm64/boot/Image* to copy into the boot partition.
+8. If the compilation is successful, you will find the file *arch/arm64/boot/Image* to copy into the boot partition (/run/media/mmcblk0p1).
 
 9. Let's compile the DTB next. Once again from the top of the kernel sources directory run: `make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- dtbs`
 
@@ -38,13 +38,12 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 
 1. Clone the profiler from *black-box-profiler* repo: https://github.com/rntmancuso/black-box-profiler.git
 
-2. Before compiling the profiler on the ZCU, you need to either cross-compile the elf library or decompress the pre-compiled library. For the former, run the install_libelf.sh from the profiler folder on Ubuntu. For the latter, decompress the *zcu_elflib.tar.gz* on the ZCU using `tar -xvf zcu_elflib.tar.gz` and add it to the Makefile for the profiler compilation. It is added as *libs* as the following in the Makefile: `CFLAGS=-I. -W -Wall -I./libs/include/ -D_VERBOSE_`, and `LDFLAGS=-lelf -L./libs/lib/ -lz`
+2. Before compiling the profiler on the ZCU, you need to either cross-compile the elf library or decompress the pre-compiled library. For the former, run the install_libelf.sh from the profiler folder [ADDRESS] on Ubuntu. For the latter, decompress the *zcu_elflib.tar.gz* [ADDRESS] on the ZCU using `tar -xvf zcu_elflib.tar.gz` and add it to the Makefile for the profiler compilation. It is added as *libs* as the following in the Makefile: `CFLAGS=-I. -W -Wall -I./libs/include/ -D_VERBOSE_`, and `LDFLAGS=-lelf -L./libs/lib/ -lz`
 
-3. Next step is cross-compiling the BBProf's kernel module (aarch64_kmod.c) from the kernel_module folder of the  *black-box-profiler* repo. To do that, replace the path of custom kernel source code in  `BLDDIR = ` with your own path of the kernel source code which you have checked out in the setting-up ZCU102. Insert the resulting aarch_kmod.ko kernem module by `insmod aarch_kmod.ko`.
+3. Next step is cross-compiling the BBProf's kernel module (aarch64_kmod.c) from the *kernel_module* folder of the  *black-box-profiler* repo. To do that, in its Makefile, replace the path of custom kernel source code `BLDDIR = ` with your own path of the kernel source code which you have checked out in the setting-up ZCU102. Insert the resulting aarch_kmod.ko kernel module by `insmod aarch_kmod.ko`.
 
-4. At this point the BBProf is ready to use. Profiler is supposed to be run with 2 mandatory command-line parameters. One of them is the name of the executable binary file of the program that we want to profile and the second one is the name of the symbol which we are interested in putting the breakpoint at. The first parameter should be set as the last command-line argument and symbol is determined by -s flag. (ex: `./profiler -s f1(name of the function) hello (name of the exe)`.)
-
-5. As an example, we consider synthetic benchmrk *two_loops* and run it  with different command-line parameters of the profiler which are listed as the following:<br/>
+4. At this point the BBProf is ready to be used. Profiler is supposed to be run with 2 mandatory command-line parameters. One of them is the name of the executable binary file of the program that we want to profile and the second one is the name of the symbol which we are interested in putting the breakpoint at. The first parameter should be set as the last command-line argument and symbol is determined by -s flag (ex: `./profiler -s f1(name of the function) hello (name of the exe)`).
+Apart from mandatory parameters there is a number of command-line options that can be passed to modify the behavior of the prfoiler. The full list is provided below: 
 <br>-h : Prints the help string.<br/>
            -m MODE : Profiling mode: c = make page cacheable, everything else non-cacheable.(default)
 	           nc = make page non-cacheable, everything else cacheable.<br/>
@@ -64,10 +63,12 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
            -t : Translate profile acquired or specified via -i parameter in human readable form..<br/>
            -N : Non-realtime mode: do not set real-time priorities for profiler nor tracee.<br/>
 
+5. Now, let's look at the synthetic benchmrk *two_loops* located in the benchmark folder [put the link] and consider some practical examples by running it with different command-line parameters of the profiler.
 
-In the example below, loop is the name of function (symbol) we put the breakpoint at, two_loops is the name of executable binary of the process, -l prints the virtual memory layout of the process, the profile is saved in two_loops_layout.prof. Two * show that among all VMAs, heap and stack are scanned.
+
+In the first example, *loop* is the name of the function (symbol) we put the breakpoint at, *two_loops* is the name of executable binary, `-l` prints the virtual memory layout of the process, with `-o` option we save the result of the profile into a binaty file called *two_loops_layout.prof*. Because we do not use `-n`, by default it acquires only one sample.Two `*` show that among all VMAs, heap and stack are being profiled.
 ```
-./profiler -o two_loops_layout.prof -l -s loop two_loops
+$ ./profiler -o two_loops_layout.prof -l -s loop two_loops
 	[DBG] Command to execute: [two_loops]
 	[DBG] [  0]    00400000-00401000 r-xp 00000000 b3:02 3585                               /home/root/two_loops
         [DBG] [  1]    00410000-00411000 rw-p 00000000 b3:02 3585                               /home/root/two_loops
@@ -87,19 +88,25 @@ In the example below, loop is the name of function (symbol) we put the breakpoin
 	[DBG] [ 14]    7fa31d1000-7fa31d3000 rw-p 0001c000 b3:02 785052                         /lib/ld-2.23.so
 	[DBG] [ 15] *  7fe57a7000-7fe57c8000 rw-p 00000000 00:00 0                              [stack]
 	[DBG] PROFILING: Collecting sample 1 of 1
-	PROFILING: [####################################################################################################] (228/228)
+        PROFILING: [#                                                                                                   ] (1/228)
+        PROFILING: [#                                                                                                   ] (2/228)
+	PROFILING: [##                                                                                                  ] (3/228)
+        PROFILING: [##                                                                                                  ] (4/228)
+        PROFILING: [###                                                                                                 ] (5/228)
+        PROFILING: [###                                                                                                 ] (6/228)
+
+        ...
+
+        PROFILING: [####################################################################################################] (228/228)
 	[DBG] Profile written to two_loops_layout.prof. Total size: 7376 bytes
-	[DBG] Profile written to two_loops_layout.prof. Total size: 7376 bytes~
+	[DBG] Profile written to two_loops_layout.prof. Total size: 7376 bytes
 ```
       
-In the second example, -t parametr translates the profile information to the human-readable format.
+In the second example, we assume that the profile information is already acquired (two_loops_layout.prof). Using `-i` we give this profile information as the input, and set `-n0` for avoiding acquiring more profiling samples. Flag `-t` translates the resulting profile information into the human-readable format.
 ```
-./profiler -t -o two_loops_verbose.prof -s loop two_loops
+$ ./profiler -i two_loops_layout.prof -t -n0  -s loop two_loops
        [DBG] Command to execute: [two_loops]
-       [DBG] PROFILING: Collecting sample 1 of 1
-       PROFILING: [####################################################################################################] (228/228)
-       [DBG] Profile written to two_loops_verbose.prof. Total size: 7376 bytes
-       [DBG] Profile written to two_loops_verbose.prof. Total size: 7376 bytes
+       [DBG] Profile read from two_loops_layout.prof.
        [DBG] 
        ----------------- PROFILE (1 samples) -----------------
        [DBG] heap_pad = 728
@@ -122,35 +129,65 @@ In the second example, -t parametr translates the profile information to the hum
        ...
 ```
 
-In the third example, with -r parameter the profile information is ranked and shown in the standard output:
+In the third example, we give already acquired profile information (two_loops_layout.prof), then by setting  `-n2` it collects two more samples and the result would be accumulated profiling information with total of three samples, saved in binary file of *two_loops_rank.prof*. By setting ` -r` parameter the profile information is ranked and shown in the standard output, here we just shows the ranking information:
 ```
-./profiler -r -o two_loops_rank.prof -s loop two_loops
+$ ./profiler -i two_loops_layout.prof  -n2 -o two_loops_rank.prof -r -s loop two_loops
       [DBG] Command to execute: [two_loops]
-      [DBG] PROFILING: Collecting sample 1 of 1
+      [DBG] Profile read from two_loops_layout.prof.
+      [DBG] PROFILING: Collecting sample 1 of 2
+      PROFILING: [#                                                                                                   ] (1/228)
+      PROFILING: [#                                                                                                   ] (2/228)
+      PROFILING: [##                                                                                                  ] (3/228)
+      PROFILING: [##                                                                                                  ] (4/228)
+      PROFILING: [###                                                                                                 ] (5/228)
+      PROFILING: [###                                                                                                 ] (6/228)
+
+        ...
+
       PROFILING: [####################################################################################################] (228/228)
       [DBG] Profile written to two_loops_rank.prof. Total size: 7376 bytes
+      [DBG] PROFILING: Collecting sample 2 of 2
+      PROFILING: [#                                                                                                   ] (1/228)
+      PROFILING: [#                                                                                                   ] (2/228)
+      PROFILING: [##                                                                                                  ] (3/228)
+      PROFILING: [##                                                                                                  ] (4/228)
+      PROFILING: [###                                                                                                 ] (5/228)
+      PROFILING: [###                                                                                                 ] (6/228)
+
+        ...
+
+       PROFILING: [####################################################################################################] (228/228)
       [DBG] Profile written to two_loops_rank.prof. Total size: 7376 bytes
+      [DBG] Profile written to two_loops_rank.prof. Total size: 7376 bytes
+      RANKING: [############################################                                                        ] (100/228)
+      RANKING: [#############################################                                                       ] (101/228)
+      RANKING: [#############################################                                                       ] (102/228)
+      RANKING: [##############################################                                                      ] (103/228)
+      RANKING: [##############################################                                                      ] (104/228)
+
+       ... 
+
+
       RANKING: [####################################################################################################] (228/228)
       [DBG]
       RANKED TIMING:
-      [DBG] 1, C: 61467409	M: 158
-      [DBG] 2, C: 61094036	M: 160
-      [DBG] 3, C: 20009349	M: 125
-      [DBG] 4, C: 19941346	M: 130
-      [DBG] 5, C: 19248420	M: 255
-      [DBG] 6, C: 19270093	M: 323
-      [DBG] 7, C: 19192718	M: 370
-      [DBG] 8, C: 18546387	M: 359
-      [DBG] 9, C: 18431164	M: 487
-      [DBG] 10, C: 18374773	M: 555
-      [DBG] 11, C: 18309513	M: 636
-      [DBG] 12, C: 18242713	M: 616
-      [DBG] 13, C: 18268441	M: 602
-      [DBG] 14, C: 18220233	M: 657
-      [DBG] 15, C: 18187028	M: 759
-      [DBG] 16, C: 18098127	M: 792
-      [DBG] 17, C: 18016254	M: 811
-      [DBG] 18, C: 17941902	M: 994
+      [DBG] 1, C: 60079155	M: 279
+      [DBG] 2, C: 61988614	M: 194
+      [DBG] 3, C: 60233975	M: 187
+      [DBG] 4, C: 60570137	M: 232
+      [DBG] 5, C: 17939447	M: 290
+      [DBG] 6, C: 57522717	M: 428
+      [DBG] 7, C: 16605660	M: 486
+      [DBG] 8, C: 16530555	M: 534
+      [DBG] 9, C: 57172055	M: 665
+      [DBG] 10, C: 55844196	M: 639
+      [DBG] 11, C: 55853908	M: 738
+      [DBG] 12, C: 15749703	M: 752
+      [DBG] 13, C: 55270798	M: 827
+      [DBG] 14, C: 15615214	M: 830
+      [DBG] 15, C: 55135498	M: 943
+      [DBG] 16, C: 15487865	M: 1028
+      [DBG] 17, C: 14745339	M: 987
       ...
 ```
 
@@ -233,107 +270,9 @@ Forth example depicts the effect of using -v flag which is profiling in the verb
 
 Now you are able to not only get the profile of any application but also the ranking information. The other useful operational mode is profile-driven page migration.
 
-### Test Page Migration
+6- For the page migration  mode, first we should make sure that the modfied kernel and system.dtb are in place, and Jailhouse hypervisor has been deployed. In the last example, we want to migrate the first 10 pages of the profile using -g. 
 
-Before even deploying the Jailhouse hypervisor, let's use our synthetic task to test that page migration works correctly.
-
-1. First off, cross-compile the *migr_test* kernel module against the custom kernel. To do that:
-   l. Move to the *kernel_module* directory and edit the *Makefile*
-   l. Change the line `BLDDIR= /home/renato/BU/Collab/BOSCH/petalinux-v2018.3/components/linux-xlnx-prof` so that it points to the directory where you have checked out the custom kernel sources
-   l. Next, just execute `make`
-   l. If everything goes smooth, the *migr_mod.ko* file will be generated. Copy this file somewhere on the ZCU102 board.
-
-2. Now move the migration benchmark *benchmarks/migrate.c* to the ZCU102. We will compile it there.
-   l. On the ZCU102, execute `gcc -o migrate migrate.c -W -Wall` to compile the migrate benchmark
-
-3. Test that the migrate benchmark works as expected. Execute: `./migrate | head` ; the expected output should be something like:
-````
-root@xilinx-zcu102-2017_3:~/bb_profiler/benchmarks# ./migrate | head
-Exec. took 821866
-Exec. took 10641
-Exec. took 7483
-Exec. took 7437
-Exec. took 7586
-Exec. took 7466
-Exec. took 7432
-Exec. took 7663
-Exec. took 7455
-Exec. took 7472
-````
-
-4. Now start the application, suppress its output and send it to background: `./migrate 1>/dev/null &` ; expected output (PID might vary):
-````
-root@xilinx-zcu102-2017_3:~/bb_profiler/benchmarks# ./migrate 1>/dev/null &
-[1] 601
-````
-
-5. Move to the kernel module directory and execute `insmod ./migr_mod.ko`
-
-6. The module will locate the *migrate* process and attempt to migrate the first two pages of the heap to the private page pool. The expected output on the serial console should be something like:
-````
-root@xilinx-zcu102-2017_3:~/bb_profiler/kernel_module# insmod migr_mod.ko 
-[ 3701.358177] migr_mod: loading out-of-tree module taints kernel.
-[ 3701.364807] migr_mod: Remapping PRIVATE_LO reserved memory area
-[ 3701.370752] migr_mod: Remapping PRIVATE_LO reserved memory area
-[ 3701.376699] migr_mod: Page struct address of pool kernel VA (LO): 0xffffffff01300000
-[ 3701.384441] migr_mod: Physical address of pool (LO): 0x60000000
-[ 3701.390357] migr_mod: Page struct address of pool kernel VA (HI): 0xffffffff1d282000
-[ 3701.398094] migr_mod: Physical address of pool (HI): 0x85dc00000
-[ 3701.404098] migr_mod: Page struct address of known kernel PA: 0xffffffff1c880000
-[ 3701.411494] migr_mod: Physical address of known address: 0x830000000
-[ 3701.417894] migr_mod: Target task located!
-[ 3701.422009] migr_mod: Process page (0xffffffff1d0d2258): VA = 0x022c4000, PA = 0x85609d000 (res = 1)
-[ 3701.431145] migr_mod: No mapping!
-[ 3701.434472] migr_mod: Process page (0xffffffff1d0d5c88): VA = 0x022c5000, PA = 0x8561a7000 (res = 1)
-[ 3701.443599] migr_mod: No mapping!
-[ 3701.446912] migr_mod: --- Migration for VMA 2 started ---
-[ 3701.452346] MIGR: Adding VA 0x022c4000
-[ 3701.456093] MIGR: Adding VA 0x022c5000
-[ 3701.459838] MIGR: Done adding VAs. Performing migration.
-[ 3701.465142] MIGR: Migration started!
-[ 3701.468710] migr_mod: POOL: Allocating VA: 0xffffff885dc00000
-[ 3701.474452] page:ffffffff1d282000 refcount:1 mapcount:0 mapping:0000000000000000 index:0x0
-[ 3701.482721] raw: 4000000000001000 ffffffff1d282008 ffffffff1d282008 0000000000000000
-[ 3701.490463] raw: 0000000000000000 0000000000000000 00000001ffffffff
-[ 3701.496723] page dumped because: pool alloc debug
-[ 3701.501438] migr_mod: POOL: Allocating VA: 0xffffff885dc01000
-[ 3701.507177] page:ffffffff1d282038 refcount:1 mapcount:0 mapping:0000000000000000 index:0x0
-[ 3701.515447] raw: 4000000000001000 ffffffff1d282040 ffffffff1d282040 0000000000000000
-[ 3701.523186] raw: 0000000000000000 0000000000000000 00000001ffffffff
-[ 3701.529452] page dumped because: pool alloc debug
-[ 3701.534169] MIGR: Migration completed (0)!
-[ 3701.538267] migr_mod: Migrating selected pages, ret = 0
-[ 3701.543487] migr_mod: ------------------------------------
-[ 3701.543489] migr_mod: Page migration returned: 0
-[ 3701.553584] migr_mod: Process page (0xffffffff1d282000): VA = 0x022c4000, PA = 0x85dc00000 (res = 1)
-[ 3701.562713] migr_mod: No mapping!
-[ 3701.566024] migr_mod: Process page (0xffffffff1d282038): VA = 0x022c5000, PA = 0x85dc01000 (res = 1)
-[ 3701.575149] migr_mod: No mapping!
-[ 3701.578459] migr_mod: Migration of task pages migration completed.
-````
-
-Notice in the output that the return of the migration operation is 0, i.e. *success*.
-Also note that the initial physical addresses (PA) of the heap pages --- `0x85609d000` and `0x8561a7000` --- correspond to pages in our private pool after the migration, in this case `0x85dc00000` and `0x85dc01000` respectively.
-
-7. Bring the application to foreground with the `fg` command and kill it with Ctrl+C. The private pool pages will be released and the serial terminal should output something like the following:
-````
-[ 3922.427408] migr_mod: Dynamic de-allocation for phys page 0x85dc01000
-[ 3922.433864] page:ffffffff1d282038 refcount:1 mapcount:0 mapping:ffffff8856525001 index:0x22c5
-[ 3922.442392] anon flags: 0x400000000008100e(referenced|uptodate|dirty|reserved|swapbacked)
-[ 3922.450576] raw: 400000000008100e ffffffff1d282008 ffffffff1d0f6178 ffffff8856525001
-[ 3922.458316] raw: 00000000000022c5 0000000000000000 00000001ffffffff
-[ 3922.464578] page dumped because: pool dealloc debug
-[ 3922.469449] migr_mod: Dynamic de-allocation for phys page 0x85dc00000
-[ 3922.475892] page:ffffffff1d282000 refcount:1 mapcount:0 mapping:ffffff8856525001 index:0x22c4
-[ 3922.484420] anon flags: 0x400000000008100e(referenced|uptodate|dirty|reserved|swapbacked)
-[ 3922.492597] raw: 400000000008100e ffffffff1d0ced00 ffffffff1d0f6178 ffffff8856525001
-[ 3922.500340] raw: 00000000000022c4 0000000000000000 00000001ffffffff
-[ 3922.506602] page dumped because: pool dealloc debug
-````
-
-Note in the output above that the two physical pages that were allocated from the private pool are correctly released.
-
-8. It is now safe to remove the migration test kernel module with `rmmod migr_mod`
+In any cases above and generally in any situation if you use -p, you can test the profiler without (interacting with) the kernel module. In this case although the profile is not meaningful and does not give correct/meaningful information, it can verify whether the profiler works.
 
 ### Jailhouse Compilation and Deployment
 
