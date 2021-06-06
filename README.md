@@ -43,9 +43,9 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 3. Next step is cross-compiling the BBProf's kernel module (aarch64_kmod.c) from the *kernel_module* folder of the  *black-box-profiler* repo. To do that, in its Makefile, replace the path of custom kernel source code `BLDDIR = ` with your own path of the kernel source code which you have checked out in the setting-up ZCU102. Insert the resulting aarch_kmod.ko kernel module by `insmod aarch_kmod.ko`.
 
 4. At this point the BBProf is ready to be used. Profiler is supposed to be run with 2 mandatory command-line parameters. One of them is the name of the executable binary file of the program that we want to profile and the second one is the name of the symbol which we are interested in putting the breakpoint at. The first parameter should be set as the last command-line argument and symbol is determined by -s flag (ex: `./profiler -s f1(name of the function) hello (name of the exe)`).<br/>
-Apart from mandatory parameters there is a number of command-line options that can be passed to modify the behavior of the prfoiler. The full list is provided below:
+Apart from mandatory parameters, there is a number of command-line options that can be passed to modify the behavior of the prfoiler. The full list is provided below:
 ```
-           <br>-h : Prints the help string.<br/>
+           -h : Prints the help string.<br/>
            -m MODE : Profiling mode: c = make page cacheable, everything else non-cacheable.(default)
 	           nc = make page non-cacheable, everything else cacheable.<br/>
            -l : Print out application's layout when scanning VMAs.<br/>
