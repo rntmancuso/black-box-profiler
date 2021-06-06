@@ -45,24 +45,24 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 4. At this point the BBProf is ready to be used. Profiler is supposed to be run with 2 mandatory command-line parameters. One of them is the name of the executable binary file of the program that we want to profile and the second one is the name of the symbol which we are interested in putting the breakpoint at. The first parameter should be set as the last command-line argument and symbol is determined by -s flag (ex: `./profiler -s f1(name of the function) hello (name of the exe)`).<br/>
 Apart from mandatory parameters, there is a number of command-line options that can be passed to modify the behavior of the prfoiler. The full list is provided below:
 ```
-           -h : Prints the help string.<br/>
+           -h : Prints the help string.
            -m MODE : Profiling mode: c = make page cacheable, everything else non-cacheable.(default)
-	           nc = make page non-cacheable, everything else cacheable.<br/>
-           -l : Print out application's layout when scanning VMAs.<br/>
-           -f FLAGS : VMA scan flags: t = text, h = heap, s = stack, b = BSS, r = rodata.<br/>
-	                              a = first anon, A = all anon, m = libm, c = libc<br/>
-				      (default = hs)<br/>
-           -r : Perform page ranking. Output sent to stdout.<br/>
-	   -s SYM : Name of target function to profile in the target executable.<br/>
-           -o PATH : Save profile to file specified by PATH.<br/>
-	   -i PATH : Load profile from file specified by PATH.<br/>
-           -p : Pretend mode, i.e. no kernel-side operations.<br/>
-           -q : Quiet mode, i.e. output of tracee is suppressed.<br/>
-           -v : Verbose mode, i.e. show A LOT of debug messages.<br/>
-           -n NUM : Number of profiling samples to acquire and aggregate (default = 1).<br/>
-           -g NUM : Perform page migration. Migrate the NUM top-ranking pages.<br/>
-           -t : Translate profile acquired or specified via -i parameter in human readable form..<br/>
-           -N : Non-realtime mode: do not set real-time priorities for profiler nor tracee.<br/>
+	           nc = make page non-cacheable, everything else cacheable.
+           -l : Print out application's layout when scanning VMAs.
+           -f FLAGS : VMA scan flags: t = text, h = heap, s = stack, b = BSS, r = rodata.
+	                              a = first anon, A = all anon, m = libm, c = libc
+				      (default = hs)
+           -r : Perform page ranking. Output sent to stdout.
+	   -s SYM : Name of target function to profile in the target executable.
+           -o PATH : Save profile to file specified by PATH.
+	   -i PATH : Load profile from file specified by PATH.
+           -p : Pretend mode, i.e. no kernel-side operations.
+           -q : Quiet mode, i.e. output of tracee is suppressed.
+           -v : Verbose mode, i.e. show A LOT of debug messages.
+           -n NUM : Number of profiling samples to acquire and aggregate (default = 1).
+           -g NUM : Perform page migration. Migrate the NUM top-ranking pages.
+           -t : Translate profile acquired or specified via -i parameter in human readable form.
+           -N : Non-realtime mode: do not set real-time priorities for profiler nor tracee.
 ```
 
 5. Now, let's look at the synthetic benchmrk *two_loops* located in the benchmark folder [put the link] and consider some practical examples by running it with different command-line parameters of the profiler.
