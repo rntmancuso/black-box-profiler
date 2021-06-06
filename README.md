@@ -42,9 +42,10 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 
 3. Next step is cross-compiling the BBProf's kernel module (aarch64_kmod.c) from the *kernel_module* folder of the  *black-box-profiler* repo. To do that, in its Makefile, replace the path of custom kernel source code `BLDDIR = ` with your own path of the kernel source code which you have checked out in the setting-up ZCU102. Insert the resulting aarch_kmod.ko kernel module by `insmod aarch_kmod.ko`.
 
-4. At this point the BBProf is ready to be used. Profiler is supposed to be run with 2 mandatory command-line parameters. One of them is the name of the executable binary file of the program that we want to profile and the second one is the name of the symbol which we are interested in putting the breakpoint at. The first parameter should be set as the last command-line argument and symbol is determined by -s flag (ex: `./profiler -s f1(name of the function) hello (name of the exe)`).
-Apart from mandatory parameters there is a number of command-line options that can be passed to modify the behavior of the prfoiler. The full list is provided below: 
-<br>-h : Prints the help string.<br/>
+4. At this point the BBProf is ready to be used. Profiler is supposed to be run with 2 mandatory command-line parameters. One of them is the name of the executable binary file of the program that we want to profile and the second one is the name of the symbol which we are interested in putting the breakpoint at. The first parameter should be set as the last command-line argument and symbol is determined by -s flag (ex: `./profiler -s f1(name of the function) hello (name of the exe)`).<br/>
+Apart from mandatory parameters there is a number of command-line options that can be passed to modify the behavior of the prfoiler. The full list is provided below:
+```
+           <br>-h : Prints the help string.<br/>
            -m MODE : Profiling mode: c = make page cacheable, everything else non-cacheable.(default)
 	           nc = make page non-cacheable, everything else cacheable.<br/>
            -l : Print out application's layout when scanning VMAs.<br/>
@@ -62,6 +63,7 @@ Apart from mandatory parameters there is a number of command-line options that c
            -g NUM : Perform page migration. Migrate the NUM top-ranking pages.<br/>
            -t : Translate profile acquired or specified via -i parameter in human readable form..<br/>
            -N : Non-realtime mode: do not set real-time priorities for profiler nor tracee.<br/>
+```
 
 5. Now, let's look at the synthetic benchmrk *two_loops* located in the benchmark folder [put the link] and consider some practical examples by running it with different command-line parameters of the profiler.
 
@@ -194,7 +196,7 @@ $ ./profiler -i two_loops_layout.prof  -n2 -o two_loops_rank.prof -r -s loop two
 Forth example depicts the effect of using -v flag which is profiling in the verbose mode. Below you can see all debug messages for only one round of profiling for just one specific page.
 ```
 
-./profiler -v -o two_loops_rank.prof -s loop two_loops
+$ ./profiler -v -o two_loops_rank.prof -s loop two_loops
      [DBG] Timing function loop
      [DBG] Command to execute: [two_loops]
      [DBG] Found symbol [loop]. Address = 0x400570
@@ -272,7 +274,7 @@ Now you are able to not only get the profile of any application but also the ran
 
 6- For the page migration  mode, first we should make sure that the modfied kernel and system.dtb are in place, and Jailhouse hypervisor has been deployed. In the last example, we want to migrate the first 10 pages of the profile using -g. 
 
-In any cases above and generally in any situation if you use -p, you can test the profiler without (interacting with) the kernel module. In this case although the profile is not meaningful and does not give correct/meaningful information, it can verify whether the profiler works.
+In any cases above if you use -p, you can test the profiler without (interacting with) the kernel module. In this case although the profile is not meaningful and does not give correct information, it can verify whether the profiler works.
 
 ### Jailhouse Compilation and Deployment
 
