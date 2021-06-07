@@ -38,7 +38,7 @@ That's it! The board should be able to boot now. Notice that the *boot.scr* is s
 
 1. Clone the profiler from *black-box-profiler* repo: https://github.com/rntmancuso/black-box-profiler.git
 
-2. Before compiling the profiler on the ZCU, you need to either cross-compile the elf library or decompress the pre-compiled library. For the former, run the install_libelf.sh from the profiler folder [ADDRESS] on Ubuntu. For the latter, decompress the *zcu_elflib.tar.gz* [ADDRESS] on the ZCU using `tar -xvf zcu_elflib.tar.gz` and add it to the Makefile for the profiler compilation. It is added as *libs* as the following in the Makefile: `CFLAGS=-I. -W -Wall -I./libs/include/ -D_VERBOSE_`, and `LDFLAGS=-lelf -L./libs/lib/ -lz`
+2. Before compiling the profiler on the ZCU, you need to either cross-compile the elf library or decompress the pre-compiled library. For the former, run the install_libelf.sh from the profiler folder (https://github.com/rntmancuso/black-box-profiler/blob/main/profiler/install_libelf.sh) on Ubuntu. For the latter, decompress the *zcu_elflib.tar.gz* (https://github.com/rntmancuso/black-box-profiler/blob/main/ZCU_files/zcu_elflib.tar.gz) on the ZCU using `tar -xvf zcu_elflib.tar.gz` and add it to the Makefile for the profiler compilation. It is added as *libs* as the following in the Makefile: `CFLAGS=-I. -W -Wall -I./libs/include/ -D_VERBOSE_`, and `LDFLAGS=-lelf -L./libs/lib/ -lz`
 
 3. Next step is cross-compiling the BBProf's kernel module (aarch64_kmod.c) from the *kernel_module* folder of the  *black-box-profiler* repo. To do that, in its Makefile, replace the path of custom kernel source code `BLDDIR = ` with your own path of the kernel source code which you have checked out in the setting-up ZCU102. Insert the resulting aarch_kmod.ko kernel module by `insmod aarch_kmod.ko`.
 
@@ -65,7 +65,7 @@ Apart from mandatory parameters, there is a number of command-line options that 
            -N : Non-realtime mode: do not set real-time priorities for profiler nor tracee.
 ```
 
-5. Now, let's look at the synthetic benchmrk *two_loops* located in the benchmark folder [put the link] and consider some practical examples by running it with different command-line parameters of the profiler.
+5. Now, let's look at the synthetic benchmrk *two_loops* located in the benchmark folder (https://github.com/rntmancuso/black-box-profiler/blob/main/benchmarks/two_loops.c) and consider some practical examples by running it with different command-line parameters of the profiler.
 
 
 In the first example, *loop* is the name of the function (symbol) we put the breakpoint at, *two_loops* is the name of executable binary, `-l` prints the virtual memory layout of the process, with `-o` option we save the result of the profile into a binaty file called *two_loops_layout.prof*. Because we do not use `-n`, by default it acquires only one sample.Two `*` show that among all VMAs, heap and stack are being profiled.
@@ -272,7 +272,7 @@ $ ./profiler -v -o two_loops_rank.prof -s loop two_loops
 
 Now you are able to not only get the profile of any application but also the ranking information. The other useful operational mode is profile-driven page migration.
 
-6- For the page migration mode, first we should make sure that the modfied kernel and system.dtb are in place, and Jailhouse hypervisor has been deployed. In the last example, we want to migrate the first 10 pages of the profile using `-g10`. Profile information is given, profiler first ranks and then migrates the top ten pages of the ranking list.
+6- For the page migration mode, first we should make sure that the modfied kernel and system.dtb are in place, and Jailhouse hypervisor has been deployed. In the last example, we want to migrate the first 10 pages of the profile using `-g10`. Profile information is given, profiler does not do any further profiling due to `-n0` first ranks and then migrates the top ten pages of the ranking list.
 ```
 $ ./profiler -i two_loops_layout.prof -n0  -g10  -s loop two_loops
     [DBG] Command to execute: [two_loops]
@@ -280,7 +280,7 @@ $ ./profiler -i two_loops_layout.prof -n0  -g10  -s loop two_loops
     [DBG] MIGRATION: Run completed. Timing: 2873157, Memory: 11804
 ```
 
-In any cases above if you use -p, you can test the profiler without (interacting with) the kernel module. In this case although the profile is not meaningful and does not give correct information, it can verify whether the profiler works.
+In any cases above if you use `-p`, you can test the profiler without (interacting with) the kernel module. In this case although the profile is not meaningful and does not give correct information, it can verify whether the profiler works.
 
 ### Jailhouse Compilation and Deployment
 
