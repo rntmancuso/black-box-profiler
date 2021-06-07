@@ -272,7 +272,13 @@ $ ./profiler -v -o two_loops_rank.prof -s loop two_loops
 
 Now you are able to not only get the profile of any application but also the ranking information. The other useful operational mode is profile-driven page migration.
 
-6- For the page migration  mode, first we should make sure that the modfied kernel and system.dtb are in place, and Jailhouse hypervisor has been deployed. In the last example, we want to migrate the first 10 pages of the profile using -g. 
+6- For the page migration mode, first we should make sure that the modfied kernel and system.dtb are in place, and Jailhouse hypervisor has been deployed. In the last example, we want to migrate the first 10 pages of the profile using `-g10`. Profile information is given, profiler first ranks and then migrates the top ten pages of the ranking list.
+```
+$ ./profiler -i two_loops_layout.prof -n0  -g10  -s loop two_loops
+    [DBG] Command to execute: [two_loops]
+    [DBG] Profile read from two_loops_layout.prof.
+    [DBG] MIGRATION: Run completed. Timing: 2873157, Memory: 11804
+```
 
 In any cases above if you use -p, you can test the profiler without (interacting with) the kernel module. In this case although the profile is not meaningful and does not give correct information, it can verify whether the profiler works.
 
