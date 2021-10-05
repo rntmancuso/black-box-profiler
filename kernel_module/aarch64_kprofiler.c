@@ -102,6 +102,7 @@ static unsigned int __in_pool = 0;
 
 struct gen_pool * mem_pool[4];
 
+
 /* The kernel was modified to invoke an implementable function with *
  * the following prototype before returning any page to the per-CPU *
  * page cache (PCP) in free_unref_page_commit. The page should return
@@ -219,7 +220,8 @@ static int mm_exp_load(void){
 
 	int ret[4] = {-1,-1,-1,-1};
 	int i;
-	 MEM_START_LO[0] = 0x00000000UL;
+	//current->mm->cpu_id = 0;
+	MEM_START_LO[0] = 0x00000000UL;
 
 	 
 	for (i = 0; i < 4; i++)
@@ -251,46 +253,56 @@ static int mm_exp_load(void){
         
 	printk("test 2\n");
 	 
-	
-        mem_pool[0] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
+	for (i = 0; i < 4; i++)
+	{
+		mem_pool[i] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
+		ret[i] |= gen_pool_add(mem_pool[i], (unsigned long)__pool_kva_lo[i],
+				       MEM_SIZE, NUMA_NODE_THIS);
 
-	ret[0] |= gen_pool_add(mem_pool[0], (unsigned long)__pool_kva_lo[0],
-			       MEM_SIZE, NUMA_NODE_THIS);
+		if (ret[i] != 0) {
+			pr_err("Unable to initialize genalloc memory pool.\n");
+			goto unmap;
+		}
+	}	
+        /* mem_pool[0] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS); */
 
-        if (ret[0] != 0) {
-                pr_err("Unable to initialize genalloc memory pool.\n");
-                goto unmap;
-        }
+	/* ret[0] |= gen_pool_add(mem_pool[0], (unsigned long)__pool_kva_lo[0], */
+	/* 		       MEM_SIZE, NUMA_NODE_THIS); */
 
-	mem_pool[1] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
+        /* if (ret[0] != 0) { */
+        /*         pr_err("Unable to initialize genalloc memory pool.\n"); */
+        /*         goto unmap; */
+        /* } */
 
-	ret[1] |= gen_pool_add(mem_pool[1], (unsigned long)__pool_kva_lo[1],
-			       MEM_SIZE, NUMA_NODE_THIS);
+	/* mem_pool[1] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS); */
 
-        if (ret[1] != 0) {
-                pr_err("Unable to initialize genalloc memory pool.\n");
-                goto unmap;
-        }
+	/* ret[1] |= gen_pool_add(mem_pool[1], (unsigned long)__pool_kva_lo[1], */
+	/* 		       MEM_SIZE, NUMA_NODE_THIS); */
 
-	mem_pool[2] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
+        /* if (ret[1] != 0) { */
+        /*         pr_err("Unable to initialize genalloc memory pool.\n"); */
+        /*         goto unmap; */
+        /* } */
 
-	ret[2] |= gen_pool_add(mem_pool[2], (unsigned long)__pool_kva_lo[2],
-			    MEM_SIZE, NUMA_NODE_THIS);
+	/* mem_pool[2] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS); */
 
-        if (ret[2] != 0) {
-                pr_err("Unable to initialize genalloc memory pool.\n");
-                goto unmap;
-        }
+	/* ret[2] |= gen_pool_add(mem_pool[2], (unsigned long)__pool_kva_lo[2], */
+	/* 		    MEM_SIZE, NUMA_NODE_THIS); */
 
-	mem_pool[3] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
+        /* if (ret[2] != 0) { */
+        /*         pr_err("Unable to initialize genalloc memory pool.\n"); */
+        /*         goto unmap; */
+        /* } */
 
-	ret[3] |= gen_pool_add(mem_pool[3], (unsigned long)__pool_kva_lo[3],
-			    MEM_SIZE, NUMA_NODE_THIS);
+	/* mem_pool[3] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS); */
 
-        if (ret[3] != 0) {
-                pr_err("Unable to initialize genalloc memory pool.\n");
-                goto unmap;
-        }
+	/* ret[3] |= gen_pool_add(mem_pool[3], (unsigned long)__pool_kva_lo[3], */
+	/* 		    MEM_SIZE, NUMA_NODE_THIS); */
+
+        /* if (ret[3] != 0) { */
+        /*         pr_err("Unable to initialize genalloc memory pool.\n"); */
+        /*         goto unmap; */
+        /* } */
 
 	/* Install handler for pages released by the kernel at task completion */
         free_pvtpool_page = __my_free_pvtpool_page;
@@ -323,33 +335,26 @@ static void mm_exp_unload(void)
 	printk("POOL: [UNLOAD] Current allocation: %d pages\n", __in_pool);
 
 	/* destroy genalloc memory pool */
-	/* for (i = 0; i < 4; i++) */
-	/* { */
-	/*   if (mem_pool[i]) */
-	/*      gen_pool_destroy(mem_pool[i]); */
-	/* } */
-	if (mem_pool[0])
-		gen_pool_destroy(mem_pool[0]);
-	if (mem_pool[1])
-		gen_pool_destroy(mem_pool[1]);
-	if (mem_pool[2])
-	        gen_pool_destroy(mem_pool[2]);
-	if (mem_pool[3])
-	        gen_pool_destroy(mem_pool[3]);
+	for (i = 0; i < 4; i++)
+	{
+	  if (mem_pool[i])
+	     gen_pool_destroy(mem_pool[i]);
+	}
+	/* if (mem_pool[0]) */
+	/* 	gen_pool_destroy(mem_pool[0]); */
+	/* if (mem_pool[1]) */
+	/* 	gen_pool_destroy(mem_pool[1]); */
+	/* if (mem_pool[2]) */
+	/*         gen_pool_destroy(mem_pool[2]); */
+	/* if (mem_pool[3]) */
+	/*         gen_pool_destroy(mem_pool[3]); */
 
 	/* Unmap & release memory regions */
 	for (i = 0; i < 4; i++)
 	{
 		memunmap((void *)__pool_kva_lo[i]);
 	}
-	/* if (__pool_kva_lo[0]) */
-	/*   memunmap((void *)__pool_kva_lo[0]); */
-	/* if (__pool_kva_lo_1) */
-	/*   memunmap((void *)__pool_kva_lo_1); */
-	/* if (__pool_kva_lo_2) */
-	/*         memunmap(__pool_kva_lo_2); */
-	/* if (__pool_kva_lo_3) */
-	/*         memunmap(__pool_kva_lo_3); */
+
 
 	/* Release handler of page deallocations */
 	free_pvtpool_page = NULL;
