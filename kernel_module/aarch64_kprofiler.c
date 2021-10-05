@@ -94,34 +94,42 @@ module_param(verbose, int, 0660);
 /* /\* NOTE: we do not actually have up until +0x20000000 because the last */
 /*    0x100000 is not visible/reserved to Linux *\/ */
 /* #define MEM_SIZE_LO       0x01ff00000UL */
-#define MEM_START_LO0      0x00000000UL
+/* #define MEM_START_LO0      0x00000000UL */
 
-#define MEM_START_LO1      0x20000000UL
+/* #define MEM_START_LO1      0x20000000UL */
 
-#define MEM_START_LO2      0x40000000UL
+/* #define MEM_START_LO2      0x40000000UL */
 
-#define MEM_START_LO3      0x60000000UL
+/* #define MEM_START_LO3      0x60000000UL */
+
+unsigned long MEM_START_LO[4];
 
 #define MEM_SIZE           0x20000000UL
 
 #define NUMA_NODE_THIS    -1
 
 /* Handle for remapped memory */
-static void * __pool_kva_lo_0 = NULL;
-static void * __pool_kva_lo_1 = NULL;
-static void * __pool_kva_lo_2 = NULL;
-static void * __pool_kva_lo_3 = NULL;
+
+/* static void * __pool_kva_lo_0 = NULL; */
+/* static void * __pool_kva_lo_1 = NULL; */
+/* static void * __pool_kva_lo_2 = NULL; */
+/* static void * __pool_kva_lo_3 = NULL; */
+
 unsigned long  __pool_kva_lo[4];
 /* This is just a hack: keep track of the (single) allocated page so *
  * that we can deallocate it upon module cleanup */
 static unsigned int __in_pool = 0;
 
-struct gen_pool * mem_pool[4] = kmalloc(4*sizeof(struct gen_pool),GFP_KERNEL);
-struct gen_pool mem_pool[0] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL); 
-struct gen_pool * mem_pool_0 = NULL;
-struct gen_pool * mem_pool_1 = NULL;
-struct gen_pool * mem_pool_2 = NULL;
-struct gen_pool * mem_pool_3 = NULL;
+struct gen_pool * mem_pool[4];
+/* mem_pool[0] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL); */
+/* mem_pool[1] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL); */
+/* mem_pool[2] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL); */
+/* mem_pool[3] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL); */
+
+/* struct gen_pool * mem_pool_0 = NULL; */
+/* struct gen_pool * mem_pool_1 = NULL; */
+/* struct gen_pool * mem_pool_2 = NULL; */
+/* struct gen_pool * mem_pool_3 = NULL; */
 /* The kernel was modified to invoke an implementable function with *
  * the following prototype before returning any page to the per-CPU *
  * page cache (PCP) in free_unref_page_commit. The page should return
@@ -238,46 +246,67 @@ int __my_free_pvtpool_page (struct page * page)
 static int mm_exp_load(void){
 
 	int ret[4] = {-1,-1,-1,-1};
+	int i;
+	 MEM_START_LO[0] = 0x00000000UL;
 
+	 
+	for (i = 0; i < 4; i++)
+	  {
+	    mem_pool[i] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL);
+	  }
+	for ( i = 1; i < 4; i++)
+	  {
+	    MEM_START_LO[i] =  MEM_START_LO[i-1]+MEM_SIZE;
+	  }
+/* mem_pool[0] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL); */
+/* mem_pool[1] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL); */
+/* mem_pool[2] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL); */
+/* mem_pool[3] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL); */
 
+ /* MEM_START_LO[0] = 0x00000000UL; */
 
+ /* MEM_START_LO[1] = 0x20000000UL; */
+
+ /* MEM_START_LO[2]= 0x40000000UL; */
+
+ /* MEM_START_LO[3]=0x60000000UL; */
 
 	/* Now try to remap memory at a known physical address. For both LO and HI range */
         printk("Remapping PRIVATE_LO reserved memory area\n");
 
         /* Setup pagemap structure to guide memremap_pages operation */
-	/* for (  i = 0; i < 4; i++) */
-	/* { */
-	/* 	__pool_kva_lo[i] = (unsigned long)memremap(MEM_START_LO[i], MEM_SIZE, MEMREMAP_WB); */
+	for (  i = 0; i < 4; i++)
+	{
+		__pool_kva_lo[i] = (unsigned long)memremap(MEM_START_LO[i], MEM_SIZE, MEMREMAP_WB);
 
-	/* 	if (__pool_kva_lo[i] == 0) { */
-	/* 		pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n", */
-	/* 		       MEM_START_LO[i]); */
-	/* 		goto unmap; */
-	/* 	} */
+		if (__pool_kva_lo[i] == 0) {
+			pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n",
+			       MEM_START_LO[i]);
+			goto unmap;
+		}
 
-	/* 	ret[i] = 0; */
-	/* } */
+		ret[i] = 0;
+	}
 	
-	__pool_kva_lo[0] = (unsigned long)memremap(MEM_START_LO0, MEM_SIZE, MEMREMAP_WB);
+	/* __pool_kva_lo[0] = (unsigned long)memremap(MEM_START_LO[0], MEM_SIZE, MEMREMAP_WB); */
 
-	if (__pool_kva_lo[0] == 0) {
-		pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n",
-		       MEM_START_LO0);
-		goto unmap;
-	}
+	/* if (__pool_kva_lo[0] == 0) { */
+	/* 	pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n", */
+	/* 	       MEM_START_LO[0]); */
+	/* 	goto unmap; */
+	/* } */
 
-	ret[0] = 0;
+	/* ret[0] = 0; */
 
-	__pool_kva_lo[1] = (unsigned long)memremap(MEM_START_LO1, MEM_SIZE, MEMREMAP_WB);
+	/* __pool_kva_lo[1] = (unsigned long)memremap(MEM_START_LO[1], MEM_SIZE, MEMREMAP_WB); */
 
-	if (__pool_kva_lo[1] == 0) {
-		pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n",
-		       MEM_START_LO1);
-		goto unmap;
-	}
+	/* if (__pool_kva_lo[1] == 0) { */
+	/* 	pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n", */
+	/* 	       MEM_START_LO[1]); */
+	/* 	goto unmap; */
+	/* } */
 
-	ret[1] = 0;
+	/* ret[1] = 0; */
 	printk("test 2\n");
 	/* __pool_kva_lo_2 = memremap(MEM_START_LO2, MEM_SIZE, MEMREMAP_WB); */
 
@@ -337,9 +366,9 @@ static int mm_exp_load(void){
                 goto unmap;
         }
 
-	mem_pool_1 = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
+	mem_pool[1] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
 
-	ret[1] |= gen_pool_add(mem_pool_1, (unsigned long)__pool_kva_lo[1],
+	ret[1] |= gen_pool_add(mem_pool[1], (unsigned long)__pool_kva_lo[1],
 			       MEM_SIZE, NUMA_NODE_THIS);
 
         if (ret[1] != 0) {
@@ -404,9 +433,9 @@ static void mm_exp_unload(void)
 	/*      gen_pool_destroy(mem_pool[i]); */
 	/* } */
 	if (mem_pool[0])
-		gen_pool_destroy(mem_pool_0);
-	if (mem_pool_1)
-		gen_pool_destroy(mem_pool_1);
+		gen_pool_destroy(mem_pool[0]);
+	if (mem_pool[1])
+		gen_pool_destroy(mem_pool[1]);
 	/* if (mem_pool_2) */
 	/*         gen_pool_destroy(mem_pool_2); */
 	/* if (mem_pool_3) */
