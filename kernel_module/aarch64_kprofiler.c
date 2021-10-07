@@ -147,12 +147,14 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
  	void * page_va;
 	struct pvtpool_params * params;
 
-	if (!mem_pool[/*current->mm->cpu_id*/0])
+	
+	
+	if (!current || !current->mm || !mem_pool[current->mm->cpu_id])
                 return NULL;
 
 	if (private == PVTPOOL_ALLOC_NOREPLACE) {
 		void * old_page_va = page_va = page_to_virt(page);
-		if(__addr_in_gen_pool(mem_pool[/*current->mm->cpu_id*/0], (unsigned long)old_page_va, PAGE_SIZE)) {
+		if(__addr_in_gen_pool(mem_pool[current->mm->cpu_id], (unsigned long)old_page_va, PAGE_SIZE)) {
 			return page;
 		}
 	} else if (private == IS_PVTPOOL_PARAMS) {
@@ -161,7 +163,7 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 			return NULL;
 	}
 
-	page_va = (void *)gen_pool_alloc(mem_pool[/*current->mm->cpu_id*/0], PAGE_SIZE);
+	page_va = (void *)gen_pool_alloc(mem_pool[current->mm->cpu_id], PAGE_SIZE);
 
         printk("POOL: Allocating VA: 0x%08lx\n", (unsigned long)page_va);
 
@@ -186,13 +188,18 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 int __my_free_pvtpool_page (struct page * page)
 {
  	void * page_va;
+	int cpu_no;
+	if(!current || !current->mm)
+	  return 1;
 
-        if (!mem_pool[/*current->mm->cpu_id*/0] || !page)
+	cpu_no = current->mm->cpu_id;
+
+	if ((cpu_no < 0 || cpu_no >= 4) ||  (!mem_pool[current->mm->cpu_id] || !page))
                 return 1;
 
         page_va = page_to_virt(page);
 
-	if(__addr_in_gen_pool(mem_pool[/*current->mm->cpu_id*/0], (unsigned long)page_va, PAGE_SIZE)) {
+	if(__addr_in_gen_pool(mem_pool[current->mm->cpu_id], (unsigned long)page_va, PAGE_SIZE)) {
                 printk("Dynamic de-allocation for phys page 0x%08llx\n",
 			page_to_phys(page));
 
@@ -201,7 +208,7 @@ int __my_free_pvtpool_page (struct page * page)
 		if (verbose)
 			dump_page(page, "pool dealloc debug");
 
-                gen_pool_free(mem_pool[/*current->mm->cpu_id*/0], (unsigned long)page_va, PAGE_SIZE);
+                gen_pool_free(mem_pool[current->mm->cpu_id], (unsigned long)page_va, PAGE_SIZE);
 
 		--__in_pool;
 
