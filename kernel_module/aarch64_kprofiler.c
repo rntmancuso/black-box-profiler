@@ -148,13 +148,12 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 	struct pvtpool_params * params;
 
 	
-	
-	if (!current || !current->mm || !mem_pool[current->mm->cpu_id])
+	if (!current || !current->mm || !current->mm->prof_info || !mem_pool[current->mm->prof_info->cpu_id])
                 return NULL;
 
 	if (private == PVTPOOL_ALLOC_NOREPLACE) {
 		void * old_page_va = page_va = page_to_virt(page);
-		if(__addr_in_gen_pool(mem_pool[current->mm->cpu_id], (unsigned long)old_page_va, PAGE_SIZE)) {
+		if(__addr_in_gen_pool(mem_pool[current->mm->prof_info->cpu_id], (unsigned long)old_page_va, PAGE_SIZE)) {
 			return page;
 		}
 	} else if (private == IS_PVTPOOL_PARAMS) {
@@ -163,7 +162,7 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 			return NULL;
 	}
 
-	page_va = (void *)gen_pool_alloc(mem_pool[current->mm->cpu_id], PAGE_SIZE);
+	page_va = (void *)gen_pool_alloc(mem_pool[current->mm->prof_info->cpu_id], PAGE_SIZE);
 
         printk("POOL: Allocating VA: 0x%08lx\n", (unsigned long)page_va);
 
@@ -178,7 +177,7 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 	++__in_pool;
 
 	printk("POOL: [ALLOC] Current allocation: %d pages\n", __in_pool);
-	printk("in alloc of kmod, current->mm->cpu_id is:%d\n",current->mm->cpu_id);
+	
 	prefetch_page(page_va);
 
 	return virt_to_page(page_va);
@@ -188,34 +187,39 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 int __my_free_pvtpool_page (struct page * page)
 {
  	void * page_va;
-	int cpu_no;
-	if(!current || !current->mm)
-	  return 1;
+	int i;
+	
+	if(!current)
+	{
+		printk("current is NULL!\n");
+		return 1;
+	}
 
-	cpu_no = current->mm->cpu_id;
+	for (i = 0; i < 4; i++){
+		if (!mem_pool[i] || !page){
+			printk("one of mem_pool or/and page are NULL :|\n");
+			return 1;
+		}
+       
+		page_va = page_to_virt(page);
+       
+		if(__addr_in_gen_pool(mem_pool[i], (unsigned long)page_va, PAGE_SIZE)) {
+			printk("Dynamic de-allocation for phys page 0x%08llx\n",
+			       page_to_phys(page));
 
-	if ((cpu_no < 0 || cpu_no >= 4) ||  (!mem_pool[current->mm->cpu_id] || !page))
-                return 1;
+			set_page_count(page, 1);
+			if (verbose)
+				dump_page(page, "pool dealloc debug");
 
-        page_va = page_to_virt(page);
+			gen_pool_free(mem_pool[i], (unsigned long)page_va, PAGE_SIZE);
 
-	if(__addr_in_gen_pool(mem_pool[current->mm->cpu_id], (unsigned long)page_va, PAGE_SIZE)) {
-                printk("Dynamic de-allocation for phys page 0x%08llx\n",
-			page_to_phys(page));
+			--__in_pool;
 
+			printk("POOL: [FREE] Current allocation: %d pages\n", __in_pool);
 
-	        set_page_count(page, 1);
-		if (verbose)
-			dump_page(page, "pool dealloc debug");
-
-                gen_pool_free(mem_pool[current->mm->cpu_id], (unsigned long)page_va, PAGE_SIZE);
-
-		--__in_pool;
-
-		printk("POOL: [FREE] Current allocation: %d pages\n", __in_pool);
-
-		return 0;
-        }
+			return 0;
+		}
+	}
 
         return 1;
 
@@ -227,7 +231,7 @@ static int mm_exp_load(void){
 
 	int ret[4] = {-1,-1,-1,-1};
 	int i;
-	//current->mm->cpu_id = 0;
+	
 	MEM_START_LO[0] = 0x00000000UL;
 
 	 
@@ -258,7 +262,6 @@ static int mm_exp_load(void){
 		ret[i] = 0;
 	}
         
-	printk("test 2\n");
 	 
 	for (i = 0; i < 4; i++)
 	{
@@ -271,54 +274,12 @@ static int mm_exp_load(void){
 			goto unmap;
 		}
 	}	
-        /* mem_pool[0] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS); */
-
-	/* ret[0] |= gen_pool_add(mem_pool[0], (unsigned long)__pool_kva_lo[0], */
-	/* 		       MEM_SIZE, NUMA_NODE_THIS); */
-
-        /* if (ret[0] != 0) { */
-        /*         pr_err("Unable to initialize genalloc memory pool.\n"); */
-        /*         goto unmap; */
-        /* } */
-
-	/* mem_pool[1] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS); */
-
-	/* ret[1] |= gen_pool_add(mem_pool[1], (unsigned long)__pool_kva_lo[1], */
-	/* 		       MEM_SIZE, NUMA_NODE_THIS); */
-
-        /* if (ret[1] != 0) { */
-        /*         pr_err("Unable to initialize genalloc memory pool.\n"); */
-        /*         goto unmap; */
-        /* } */
-
-	/* mem_pool[2] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS); */
-
-	/* ret[2] |= gen_pool_add(mem_pool[2], (unsigned long)__pool_kva_lo[2], */
-	/* 		    MEM_SIZE, NUMA_NODE_THIS); */
-
-        /* if (ret[2] != 0) { */
-        /*         pr_err("Unable to initialize genalloc memory pool.\n"); */
-        /*         goto unmap; */
-        /* } */
-
-	/* mem_pool[3] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS); */
-
-	/* ret[3] |= gen_pool_add(mem_pool[3], (unsigned long)__pool_kva_lo[3], */
-	/* 		    MEM_SIZE, NUMA_NODE_THIS); */
-
-        /* if (ret[3] != 0) { */
-        /*         pr_err("Unable to initialize genalloc memory pool.\n"); */
-        /*         goto unmap; */
-        /* } */
+        
 
 	/* Install handler for pages released by the kernel at task completion */
         free_pvtpool_page = __my_free_pvtpool_page;
 	alloc_pvtpool_page = alloc_pool_page;
 
-	/* Run a quick sanity check on the existance of page structs
-	 * for pool area */
-	//if(verbose)
-	//	test_page_structs();
 
 	pr_info("KPROFILER module installed successfully.\n");
 
@@ -347,14 +308,7 @@ static void mm_exp_unload(void)
 	  if (mem_pool[i])
 	     gen_pool_destroy(mem_pool[i]);
 	}
-	/* if (mem_pool[0]) */
-	/* 	gen_pool_destroy(mem_pool[0]); */
-	/* if (mem_pool[1]) */
-	/* 	gen_pool_destroy(mem_pool[1]); */
-	/* if (mem_pool[2]) */
-	/*         gen_pool_destroy(mem_pool[2]); */
-	/* if (mem_pool[3]) */
-	/*         gen_pool_destroy(mem_pool[3]); */
+        
 
 	/* Unmap & release memory regions */
 	for (i = 0; i < 4; i++)
