@@ -89,7 +89,7 @@ module_param(verbose, int, 0660);
 
 unsigned long MEM_START_LO[4];
 
-#define MEM_SIZE           0x20000000UL
+#define MEM_SIZE           0x10000000UL
 
 #define NUMA_NODE_THIS    -1
 
@@ -232,7 +232,7 @@ static int mm_exp_load(void){
 	int ret[4] = {-1,-1,-1,-1};
 	int i;
 	
-	MEM_START_LO[0] = 0x00000000UL;
+	MEM_START_LO[0] = 0x10000000UL;
 
 	 
 	for (i = 0; i < 4; i++)
