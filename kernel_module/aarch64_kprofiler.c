@@ -1,4 +1,4 @@
-//kernel module for printing a process vma and pte
+////kernel module for printing a process vma and pte
 
 #include <linux/version.h>
 #include <linux/init.h>
@@ -87,21 +87,39 @@ module_param(verbose, int, 0660);
         } while (0)
 
 
-unsigned long MEM_START_LO[4];
+//unsigned long MEM_START_LO[4];
+/* #define MEM_START          0x10000000UL */
+/* #define MEM_SIZE           0x10000000UL */
+/* #define MEM_START           0xfffc0000UL */
+/* #define MEM_SIZE            0x00020000UL */
+#define MEM_START           0xa0000000UL
+#define MEM_SIZE            0x00100000UL
 
-#define MEM_SIZE           0x10000000UL
 
 #define NUMA_NODE_THIS    -1
 
+extern void __clean_inval_dcache_area(void * kaddr, size_t size);
+
 /* Handle for remapped memory */
-unsigned long  __pool_kva_lo[4];
+//unsigned long  __pool_kva_lo[4];
+static void * __pool_kva_lo = NULL;
 
 /* This is just a hack: keep track of the (single) allocated page so *
  * that we can deallocate it upon module cleanup */
 static unsigned int __in_pool = 0;
 
-struct gen_pool * mem_pool[4];
+//struct gen_pool * mem_pool[4];
+struct gen_pool * mem_pool = NULL;
 
+struct Data // for neccessary info for cacheability_modifier
+{
+	struct vm_area_struct  *vmas;
+	unsigned long vaddr;
+  //int count_vma;
+  //#ifdef __aarch64__
+  //struct mm_struct *mm;
+  //#endif
+};
 
 /* The kernel was modified to invoke an implementable function with *
  * the following prototype before returning any page to the per-CPU *
@@ -112,7 +130,7 @@ struct gen_pool * mem_pool[4];
 
 extern struct page * (*alloc_pvtpool_page) (struct page *, unsigned long);
 extern int (*free_pvtpool_page) (struct page *);
-
+extern void (*cacheability_modifier)(unsigned long int user_vaddr, struct vm_area_struct *vma/*, pte_t *pte*/);
 
 
 static inline void prefetch_page(void * page_va) {
@@ -142,18 +160,120 @@ static bool __addr_in_gen_pool(struct gen_pool *pool, unsigned long start,
         return found;
 }
 
+static int cacheability_mod (pte_t *ptep, unsigned long addr,void *data)
+{
+        int i;
+        pte_t *pte = ptep;
+        size_t pfn;
+        pte_t newpte;
+        struct page *page = NULL;
+        void *page_v;
+        ///int skip;
+        //int skip = cp.vmas[((struct Data*)data)->count_vma].operation;                                                               
+        //int no_page = (params->vma->vm_end - params->vma->vm_start)/PAGE_SIZE;           
+        //struct vm_area_struct * vma = (struct pvtpool_params *)data->vma;
+	///struct pvtpool_params *params = (struct pvtpool_params *)data; 
+	///int no_pages = (data.vmas->vm_end - params->vma->vm_start)/PAGE_SIZE;
+	////addr = ((struct Data*)&data)->vaddr;
+        //DBG_PRINT("skip: %d,page_number:%d\n",skip,cp.vmas[((struct Data*)data)->count_vma].page_count);                          ///   
+        /*for finding the page we want to make it non-cacheable*/
+        /* for (i=0; i < no_pages; i++) */
+        /* { */
+        /*         if (addr == params->vaddr)//page_va or included in data, user vaddr                                             */
+	/* 	{ */
+	/* 		skip = 0;//do the stuff for it, we don't skip for this page                                             */
+	/* 		break; */
+	/* 	} */
+        /* } */
+
+	/* if (!skip){ */
+        /*        printk("we are changin pte for params->vaddr\n"); */
+	///
+
+//making new pte
+	pfn = pte_pfn(*pte); //with the old pte                                                                               
+	page = pte_page(*pte);
+	page_v = kmap(page);
+	
+       	newpte = pfn_pte(pfn, pgprot_writecombine(((struct Data*)data)->vmas->vm_page_prot));
+	//flush_cache_mm (((struct Data*)data)->mm);                                                                          
+	__clean_inval_dcache_area(page_v, PAGE_SIZE);
+		 
+	kunmap(page_v);
+
+	/*DBG_PRINT("CM: 0x%llx --> 0x%llx (VA: 0x%lx; PFN = 0x%lx)\n",                                                       
+	  (long long)pte_val(*pte),                                                                                          
+	  (long long)pte_val(newpte), addr, pfn);*/
+
+	set_pte_at(current->mm, addr, pte, newpte);// each process has only one mm
+	flush_tlb_page(((struct Data*)data)->vmas, addr);
+	//}
+
+
+	
+	//printk("in cacheability_mod\n");
+	return 0;
+}
+
+/* void __cacheability_modifier(unsigned long int user_vaddr, struct vm_area_struct *vma) */
+/* { */
+/*   //struct Data data;// is not array, does not need kmalloc */
+/*   struct Data *data = kmalloc (sizeof(struct Data), GFP_KERNEL); */
+/*   data->vmas = vma; */
+/*   data->vaddr = user_vaddr; */
+  
+/*   apply_to_page_range(data->vmas->vm_mm, data->vaddr,PAGE_SIZE, */
+/*   		      cacheability_mod, data); */
+/* } */
+
+
+void __cacheability_modifier(unsigned long int user_vaddr, struct vm_area_struct *vma/*,pte_t *pte*/)
+{
+  //struct Data data;// is not array, does not need kmalloc
+  struct Data *data = kmalloc (sizeof(struct Data), GFP_KERNEL);
+  data->vmas = vma;
+  data->vaddr = user_vaddr;
+  
+  apply_to_page_range(data->vmas->vm_mm, data->vaddr,PAGE_SIZE,cacheability_mod, data);
+    
+  //printk("inside __cacheabolity_modifier\n");
+        /* size_t pfn; */
+        /* pte_t newpte; */
+        /* struct page *page = NULL; */
+        /* void *page_v; */
+
+        /* pfn = pte_pfn(*pte); //with the old pte                                                                                */
+	/* page = pte_page(*pte); */
+	/* page_v = kmap(page); */
+	
+       	/* newpte = pfn_pte(pfn, pgprot_writecombine(vma->vm_page_prot)); */
+	/* //flush_cache_mm (((struct Data*)data)->mm);                                                                           */
+	/* __clean_inval_dcache_area(page_v, PAGE_SIZE); */
+		 
+	/* kunmap(page_v); */
+
+	/* /\*DBG_PRINT("CM: 0x%llx --> 0x%llx (VA: 0x%lx; PFN = 0x%lx)\n",                                                        */
+	/*   (long long)pte_val(*pte),                                                                                           */
+	/*   (long long)pte_val(newpte), addr, pfn);*\/ */
+
+	/* set_pte_at(current->mm, user_vaddr, pte, newpte);// each process has only one mm */
+	/* flush_tlb_page(vma, user_vaddr); */
+	
+}
+
+
 struct page * alloc_pool_page(struct page * page, unsigned long private)
 {
  	void * page_va;
 	struct pvtpool_params * params;
 
-	
-	if (!current || !current->mm || !current->mm->prof_info || !mem_pool[current->mm->prof_info->cpu_id])
-                return NULL;
 
+	if (!current || !current->mm || !current->mm->prof_info || !mem_pool)
+                return NULL;
+ 	printk("beginning of the allocation in the kernel module\n");
 	if (private == PVTPOOL_ALLOC_NOREPLACE) {
 		void * old_page_va = page_va = page_to_virt(page);
-		if(__addr_in_gen_pool(mem_pool[current->mm->prof_info->cpu_id], (unsigned long)old_page_va, PAGE_SIZE)) {
+		if(__addr_in_gen_pool(mem_pool, (unsigned long)old_page_va, PAGE_SIZE)) {
 			return page;
 		}
 	} else if (private == IS_PVTPOOL_PARAMS) {
@@ -161,13 +281,16 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 		if ((params->vma->vm_flags & VM_ALLOC_PVT_CORE) == 0)
 			return NULL;
 	}
-
-	page_va = (void *)gen_pool_alloc(mem_pool[current->mm->prof_info->cpu_id], PAGE_SIZE);
+	//if (params->vma->vm_mm)
+	  ///  printk("params->vma is not  NULL\n");
+	//apply_to_page_range(params->vma->vm_mm, params->vma->vm_start, params->vma->vm_end - params->vma->vm_start,cacheability_modifier,params);
+	
+	page_va = (void *)gen_pool_alloc(mem_pool, PAGE_SIZE);
 
         printk("POOL: Allocating VA: 0x%08lx\n", (unsigned long)page_va);
 
 	if (!page_va) {
-                pr_err("Unable to allocate page from colored pool.\n");
+	  //pr_err("Unable to allocate page from colored pool.\n");
 		return NULL;
 	}
 
@@ -176,7 +299,7 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 
 	++__in_pool;
 
-	printk("POOL: [ALLOC] Current allocation: %d pages\n", __in_pool);
+	///printk("POOL: [ALLOC] Current allocation: %d pages\n", __in_pool);
 	
 	prefetch_page(page_va);
 
@@ -187,7 +310,7 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 int __my_free_pvtpool_page (struct page * page)
 {
  	void * page_va;
-	int i;
+	//	int i;
 	
 	if(!current)
 	{
@@ -195,31 +318,31 @@ int __my_free_pvtpool_page (struct page * page)
 		return 1;
 	}
 
-	for (i = 0; i < 4; i++){
-		if (!mem_pool[i] || !page){
+	//for (i = 0; i < 4; i++){
+		if (!mem_pool || !page){
 			printk("one of mem_pool or/and page are NULL :|\n");
 			return 1;
 		}
        
 		page_va = page_to_virt(page);
        
-		if(__addr_in_gen_pool(mem_pool[i], (unsigned long)page_va, PAGE_SIZE)) {
-			printk("Dynamic de-allocation for phys page 0x%08llx\n",
+		if(__addr_in_gen_pool(mem_pool, (unsigned long)page_va, PAGE_SIZE)) {
+		  printk("Dynamic de-allocation for phys page 0x%08llx\n",
 			       page_to_phys(page));
 
 			set_page_count(page, 1);
 			if (verbose)
 				dump_page(page, "pool dealloc debug");
 
-			gen_pool_free(mem_pool[i], (unsigned long)page_va, PAGE_SIZE);
+			gen_pool_free(mem_pool, (unsigned long)page_va, PAGE_SIZE);
 
 			--__in_pool;
 
-			printk("POOL: [FREE] Current allocation: %d pages\n", __in_pool);
+			///		printk("POOL: [FREE] Current allocation: %d pages\n", __in_pool);
 
 			return 0;
 		}
-	}
+		//}
 
         return 1;
 
@@ -229,57 +352,58 @@ int __my_free_pvtpool_page (struct page * page)
 
 static int mm_exp_load(void){
 
-	int ret[4] = {-1,-1,-1,-1};
-	int i;
+  //int ret[4] = {-1,-1,-1,-1};
+  //	int i;
+  int ret = -1;
 	
-	MEM_START_LO[0] = 0x10000000UL;
+  //MEM_START_LO[0] = 0x10000000UL;
 
 	 
-	for (i = 0; i < 4; i++)
-	  {
-	    mem_pool[i] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL);
-	  }
-	for ( i = 1; i < 4; i++)
-	  {
-	    MEM_START_LO[i] =  MEM_START_LO[i-1]+MEM_SIZE;
-	  }
+        /* for (i = 0; i < 4; i++) */
+  	/*   { */
+	/*     mem_pool[i] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL); */
+	/*   } */
+	/* for ( i = 1; i < 4; i++) */
+	/*   { */
+	/*     MEM_START_LO[i] =  MEM_START_LO[i-1]+MEM_SIZE; */
+	/*   } */
 
 
 	/* Now try to remap memory at a known physical address. For both LO and HI range */
         printk("Remapping PRIVATE_LO reserved memory area\n");
 
         /* Setup pagemap structure to guide memremap_pages operation */
-	for (  i = 0; i < 4; i++)
-	{
-		__pool_kva_lo[i] = (unsigned long)memremap(MEM_START_LO[i], MEM_SIZE, MEMREMAP_WB);
+	//	for (  i = 0; i < 4; i++)
+	//{
+		__pool_kva_lo = memremap(MEM_START, MEM_SIZE, MEMREMAP_WB);
 
-		if (__pool_kva_lo[i] == 0) {
+		if (__pool_kva_lo == 0) {
 			pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n",
-			       MEM_START_LO[i]);
+			       MEM_START);
 			goto unmap;
 		}
 
-		ret[i] = 0;
-	}
+		ret = 0;
+		//}
         
 	 
-	for (i = 0; i < 4; i++)
-	{
-		mem_pool[i] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
-		ret[i] |= gen_pool_add(mem_pool[i], (unsigned long)__pool_kva_lo[i],
+		//for (i = 0; i < 4; i++)
+		//{
+		mem_pool = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
+		ret |= gen_pool_add(mem_pool, (unsigned long)__pool_kva_lo,
 				       MEM_SIZE, NUMA_NODE_THIS);
 
-		if (ret[i] != 0) {
+		if (ret != 0) {
 			pr_err("Unable to initialize genalloc memory pool.\n");
 			goto unmap;
 		}
-	}	
+		//}	
         
 
 	/* Install handler for pages released by the kernel at task completion */
         free_pvtpool_page = __my_free_pvtpool_page;
 	alloc_pvtpool_page = alloc_pool_page;
-
+	cacheability_modifier = __cacheability_modifier;
 
 	pr_info("KPROFILER module installed successfully.\n");
 
@@ -299,27 +423,28 @@ unmap:
 
 static void mm_exp_unload(void)
 {
-	int i;
+  //int i;
 	printk("POOL: [UNLOAD] Current allocation: %d pages\n", __in_pool);
 
 	/* destroy genalloc memory pool */
-	for (i = 0; i < 4; i++)
-	{
-	  if (mem_pool[i])
-	     gen_pool_destroy(mem_pool[i]);
-	}
+	//for (i = 0; i < 4; i++)
+	//{
+	  if (mem_pool)
+	     gen_pool_destroy(mem_pool);
+	  //}
         
 
 	/* Unmap & release memory regions */
-	for (i = 0; i < 4; i++)
-	{
-		memunmap((void *)__pool_kva_lo[i]);
-	}
+	//for (i = 0; i < 4; i++)
+	//{
+		memunmap((void *)__pool_kva_lo);
+		//}
 
 
 	/* Release handler of page deallocations */
 	free_pvtpool_page = NULL;
 	alloc_pvtpool_page = NULL;
+	cacheability_modifier = NULL;
 
 
 
