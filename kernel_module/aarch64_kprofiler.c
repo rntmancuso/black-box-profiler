@@ -1,4 +1,4 @@
-////kernel module for printing a process vma and pte
+/////kernel moduAle for printing a process vma and pte
 
 #include <linux/version.h>
 #include <linux/init.h>
@@ -38,7 +38,7 @@
 #include <asm/io.h>
 #include <linux/proc_fs.h>
 #include <linux/sched/mm.h>
-
+#include <linux/of.h>
 
 #include <asm/mman.h>
 #include <linux/smp.h>   /* for on_each_cpu */
@@ -87,14 +87,15 @@ module_param(verbose, int, 0660);
         } while (0)
 
 
-//unsigned long MEM_START_LO[4];
+
 /* #define MEM_START          0x10000000UL */
 /* #define MEM_SIZE           0x10000000UL */
 /* #define MEM_START           0xfffc0000UL */
 /* #define MEM_SIZE            0x00020000UL */
-#define MEM_START           0xa0000000UL
-#define MEM_SIZE            0x00100000UL
-
+//#define MEM_START           0xa0000000UL
+//#define MEM_SIZE            0x00100000UL
+unsigned long MEM_START[4];
+unsigned long MEM_SIZE[4];
 
 #define NUMA_NODE_THIS    -1
 
@@ -120,6 +121,16 @@ struct Data // for neccessary info for cacheability_modifier
   //struct mm_struct *mm;
   //#endif
 };
+
+struct MemRange
+{
+	unsigned long start;
+	unsigned long size;
+};
+
+//for keeping reg property of memory device node in dtb
+struct MemRange mem[4]; 
+   
 
 /* The kernel was modified to invoke an implementable function with *
  * the following prototype before returning any page to the per-CPU *
@@ -159,6 +170,90 @@ static bool __addr_in_gen_pool(struct gen_pool *pool, unsigned long start,
         rcu_read_unlock();
         return found;
 }
+
+///*static int*/ void pool_range(void)// why static int? //designing error handling path
+void pool_range(void){
+  
+	struct device_node **mem_type;
+	struct device_node **node_count;
+	//const __be64 *regs_prop; /*= kmalloc (5*sizeof(const __be64), GFP_KERNEL);*/
+	u64 regs[2];//regs[0] = start and regs[1] = size 
+	int rc,i,j,z,mem_no=0;
+	
+	printk("inside pool_range()\n");
+/* for counting number of device nodes of type memory with compatible = bram-pool*/
+	node_count = kmalloc(10*sizeof(struct device_node*), GFP_KERNEL);
+	node_count[0] = of_find_compatible_node(NULL,"memory","bram-pool");
+	if (!node_count[0])
+	{
+		printk("no node_count[0]!\n");
+	}
+	else
+	{
+		mem_no++;
+		printk("first mem_no is %d\n",mem_no);
+	}
+	for (mem_no; mem_no < 10; mem_no++ )
+	{
+		node_count[mem_no] = of_find_compatible_node(node_count[(mem_no)-1],"memory","bram-pool");
+	        if (!(node_count[mem_no]))
+	        {
+			printk("second mem_no is %d\n", mem_no);
+			break;
+	        }
+        }
+	kfree(node_count);
+
+/*using mem_no, receiving memory nodes with compatible = bram-pool*/
+	mem_type = kmalloc(mem_no*sizeof(struct device_node*), GFP_KERNEL);
+  
+	mem_type[0] = of_find_compatible_node(NULL,"memory","bram-pool");
+
+	if (!mem_type){
+		printk("NOOOO!\n");
+	}
+	
+	for (z = 0; z < 2; z++)
+	{
+		rc = of_property_read_u64_index(mem_type[0],"reg",
+						z, &regs[z]);
+		if (rc/*!regs_prop*/){
+			printk("didn't catch the regs<mem_start> correctly\n");
+		}
+	}
+        printk("mem[0].start : %llx, mem[0].size = %llx \n",regs[0], regs[1]);
+        mem[0].start = regs[0];
+        mem[0].size = regs[1];
+
+	for (i = 1; i <= mem_no; i++){
+		mem_type[i] = of_find_compatible_node(mem_type[i-1],"memory","bram-pool");
+
+		if (!mem_type[i]){
+			printk("END\n");
+			//return -1;
+			break;
+		}
+
+		
+		for (j = 0; j < 2; j++)
+		{
+		
+			rc = of_property_read_u64_index(mem_type[i],"reg",
+							j, &regs[j]);
+			if (rc){
+				printk("didn't catch the regs<mem_start> correctly\n");
+			}
+		} //regs[0] and regs[1] are filled
+
+		printk("mem[%d].start: %llx and mem[%d].size: %llx\n",i,regs[0],i,regs[1]);
+		
+		mem[i].start = regs[0];
+		mem[i].size = regs[1];
+	}
+  
+
+}
+
 
 static int cacheability_mod (pte_t *ptep, unsigned long addr,void *data)
 {
@@ -352,9 +447,9 @@ int __my_free_pvtpool_page (struct page * page)
 
 static int mm_exp_load(void){
 
-  //int ret[4] = {-1,-1,-1,-1};
+  int ret[4] = {-1,-1,-1,-1};
   //	int i;
-  int ret = -1;
+  //int ret = -1;
 	
   //MEM_START_LO[0] = 0x10000000UL;
 
@@ -371,29 +466,32 @@ static int mm_exp_load(void){
 
 	/* Now try to remap memory at a known physical address. For both LO and HI range */
         printk("Remapping PRIVATE_LO reserved memory area\n");
+	printk("before pool_range\n");
+	pool_range();
+	printk("after pool_range(): size and start are filled\n");
 
         /* Setup pagemap structure to guide memremap_pages operation */
-	//	for (  i = 0; i < 4; i++)
+	//for (  i = 0; i < 4; i++)
 	//{
-		__pool_kva_lo = memremap(MEM_START, MEM_SIZE, MEMREMAP_WB);
+		__pool_kva_lo = memremap(mem[0].start, mem[0].size, MEMREMAP_WB);
 
 		if (__pool_kva_lo == 0) {
 			pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n",
-			       MEM_START);
+			       MEM_START[0]);
 			goto unmap;
 		}
 
-		ret = 0;
+		ret[0] = 0;
 		//}
         
 	 
 		//for (i = 0; i < 4; i++)
 		//{
 		mem_pool = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
-		ret |= gen_pool_add(mem_pool, (unsigned long)__pool_kva_lo,
-				       MEM_SIZE, NUMA_NODE_THIS);
+		ret[0] |= gen_pool_add(mem_pool, (unsigned long)__pool_kva_lo,
+				       mem[0].size, NUMA_NODE_THIS);
 
-		if (ret != 0) {
+		if (ret[0] != 0) {
 			pr_err("Unable to initialize genalloc memory pool.\n");
 			goto unmap;
 		}
