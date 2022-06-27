@@ -1,4 +1,7 @@
-/////kernel moduAle for printing a process vma and pte
+/*memory profiler: reads different memory infrastructures from the dtb of the kernel,
+generates memory pools from those mem infrastructures, benchmarks these different memories
+for modeling them by collecting peak bw,...., and presents it (memory profiler's output) as
+...*/
 
 #include <linux/version.h>
 #include <linux/init.h>
@@ -88,29 +91,36 @@ module_param(verbose, int, 0660);
 
 
 
-/* #define MEM_START          0x10000000UL */
-/* #define MEM_SIZE           0x10000000UL */
-/* #define MEM_START           0xfffc0000UL */
-/* #define MEM_SIZE            0x00020000UL */
-//#define MEM_START           0xa0000000UL
-//#define MEM_SIZE            0x00100000UL
-unsigned long MEM_START[4];
-unsigned long MEM_SIZE[4];
+/**************for physical memory based on dtb 
+memory type, MEM_START, MEM_SIZE
+BRAM          
+FPGA-DRAM           0xfffc0000UL 
+OCM
+DRAM
+***************/
+
+
+//unsigned long MEM_START[4]; //array for keeping the start address of each memory pool
+//unsigned long MEM_SIZE[4];  //size of each memory pool
+//TODO? enum for each memory (index for each mem to be used inabove arrays
+
+int mem_no = 0; //for now, but I think is better to pass it rather than having as general
 
 #define NUMA_NODE_THIS    -1
 
 extern void __clean_inval_dcache_area(void * kaddr, size_t size);
 
 /* Handle for remapped memory */
-//unsigned long  __pool_kva_lo[4];
-static void * __pool_kva_lo = NULL;
+unsigned long  __pool_kva_lo[4];
+//static void * __pool_kva_lo = NULL
 
 /* This is just a hack: keep track of the (single) allocated page so *
  * that we can deallocate it upon module cleanup */
 static unsigned int __in_pool = 0;
 
+struct gen_pool ** mem_pool;
 //struct gen_pool * mem_pool[4];
-struct gen_pool * mem_pool = NULL;
+//struct gen_pool * mem_pool = NULL;
 
 struct Data // for neccessary info for cacheability_modifier
 {
@@ -129,8 +139,8 @@ struct MemRange
 };
 
 //for keeping reg property of memory device node in dtb
-struct MemRange mem[4]; 
-   
+//struct MemRange mem[4]; 
+struct MemRange *mem;   
 
 /* The kernel was modified to invoke an implementable function with *
  * the following prototype before returning any page to the per-CPU *
@@ -175,49 +185,62 @@ static bool __addr_in_gen_pool(struct gen_pool *pool, unsigned long start,
 void pool_range(void){
   
 	struct device_node **mem_type;
-	struct device_node **node_count;
-	//const __be64 *regs_prop; /*= kmalloc (5*sizeof(const __be64), GFP_KERNEL);*/
+	struct device_node *node_count;
 	u64 regs[2];//regs[0] = start and regs[1] = size 
-	int rc,i,j,z,mem_no=0;
+	int rc,i,j;
 	
 	printk("inside pool_range()\n");
-/* for counting number of device nodes of type memory with compatible = bram-pool*/
-	node_count = kmalloc(10*sizeof(struct device_node*), GFP_KERNEL);
-	node_count[0] = of_find_compatible_node(NULL,"memory","bram-pool");
-	if (!node_count[0])
-	{
-		printk("no node_count[0]!\n");
-	}
-	else
-	{
-		mem_no++;
-		printk("first mem_no is %d\n",mem_no);
-	}
-	for (mem_no; mem_no < 10; mem_no++ )
-	{
-		node_count[mem_no] = of_find_compatible_node(node_count[(mem_no)-1],"memory","bram-pool");
-	        if (!(node_count[mem_no]))
-	        {
-			printk("second mem_no is %d\n", mem_no);
-			break;
-	        }
-        }
-	kfree(node_count);
+	
+	/* node_count = kmalloc(10*sizeof(struct device_node*), GFP_KERNEL); */
+	/* node_count[0] = of_find_compatible_node(NULL,"memory","genpool"); */
+	/* if (!node_count[0]) */
+	/* { */
+	/* 	printk("no node_count[0]!\n"); */
+	/* } */
+	/* else */
+	/* { */
+	/* 	mem_no++; */
+	/* 	printk("first mem_no is %d\n",mem_no); */
+	/* } */
+/*scanning nodes in the first round for realizing the number of nodes with compatible = genpool*/
+	node_count = NULL;
+	do
+	  {
+	    node_count = of_find_compatible_node(node_count, "memory","genpool");
+	    if (node_count)
+	      mem_no++;
+	  }
+	while(node_count != NULL);
+	/* for (mem_no; mem_no < 10; mem_no++ ) */
+	/* { */
+	/* 	node_count[mem_no] = of_find_compatible_node(node_count[(mem_no)-1],"memory","genpool"); */
+	/*         if (!(node_count[mem_no])) */
+	/*         { */
+	/* 		printk("second mem_no is %d\n", mem_no); */
+	/* 		break; */
+	/*         } */
+        /* } */
+	/* kfree(node_count); */
 
-/*using mem_no, receiving memory nodes with compatible = bram-pool*/
+
 	mem_type = kmalloc(mem_no*sizeof(struct device_node*), GFP_KERNEL);
-  
-	mem_type[0] = of_find_compatible_node(NULL,"memory","bram-pool");
+  	mem = kmalloc(mem_no*sizeof(struct MemRange),GFP_KERNEL);
+
+ /*second round is for actually reading nodes of dtb with compatible = genpool and reading
+the start addr and the size of each type of memory node*/
+	
+	//for reading the start and size of the first desired  memory node
+	mem_type[0] = of_find_compatible_node(NULL,"memory","genpool");
 
 	if (!mem_type){
-		printk("NOOOO!\n");
+		printk("mem_type is NULL!\n");
 	}
 	
-	for (z = 0; z < 2; z++)
+	for (i = 0; i < 2; i++)
 	{
 		rc = of_property_read_u64_index(mem_type[0],"reg",
-						z, &regs[z]);
-		if (rc/*!regs_prop*/){
+						i, &regs[i]);
+		if (rc){
 			printk("didn't catch the regs<mem_start> correctly\n");
 		}
 	}
@@ -225,12 +248,12 @@ void pool_range(void){
         mem[0].start = regs[0];
         mem[0].size = regs[1];
 
+	//for reading the start and size of rest of desired memory nodes
 	for (i = 1; i <= mem_no; i++){
-		mem_type[i] = of_find_compatible_node(mem_type[i-1],"memory","bram-pool");
+		mem_type[i] = of_find_compatible_node(mem_type[i-1],"memory","genpool");
 
 		if (!mem_type[i]){
-			printk("END\n");
-			//return -1;
+			printk("END of memory nodes\n");
 			break;
 		}
 
@@ -243,7 +266,7 @@ void pool_range(void){
 			if (rc){
 				printk("didn't catch the regs<mem_start> correctly\n");
 			}
-		} //regs[0] and regs[1] are filled
+		} 
 
 		printk("mem[%d].start: %llx and mem[%d].size: %llx\n",i,regs[0],i,regs[1]);
 		
@@ -254,10 +277,60 @@ void pool_range(void){
 
 }
 
+static int initializer(int* ret)
+{
+	int i;
+	
+	for (i = 0; i < mem_no; i++)
+        {
+                ret[i] = -1;
+        }
 
+	mem_pool = kmalloc(mem_no*sizeof(struct gen_pool*),GFP_KERNEL);
+        for (i = 0; i < mem_no; i++)
+        {
+                mem_pool[i] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL);
+        }
+
+	printk("Remapping reserved memory area\n");
+
+	for (i = 0; i < mem_no; i++)
+        {
+         	__pool_kva_lo[i] = (unsigned long)memremap(mem[i].start, mem[i].size, MEMREMAP_WB);
+
+                if (__pool_kva_lo[i] == 0) {
+                        pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n",mem[i].start);
+                        goto unmap;
+                }
+
+		ret[i] = 0;
+        }
+	
+	for (i = 0; i < mem_no; i++)
+        {
+                mem_pool[i] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
+                ret[i] |= gen_pool_add(mem_pool[i], (unsigned long)__pool_kva_lo[i],
+                                       mem[i].size, NUMA_NODE_THIS);
+
+                if (ret[i] != 0) {
+			pr_err("Unable to initialize genalloc memory pool.\n");
+                        goto unmap;
+                }
+        }
+
+        kfree(mem);
+
+        return 0;
+
+unmap:
+	printk("for now: here is unmap!\n");
+	return -1;
+	
+}
+	
 static int cacheability_mod (pte_t *ptep, unsigned long addr,void *data)
 {
-        int i;
+//        int i;
         pte_t *pte = ptep;
         size_t pfn;
         pte_t newpte;
@@ -363,12 +436,13 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 	struct pvtpool_params * params;
 
 
-	if (!current || !current->mm || !current->mm->prof_info || !mem_pool)
+	if (!current || !current->mm || !current->mm->prof_info || !mem_pool[current->mm->prof_info->cpu_id])
                 return NULL;
+	
  	printk("beginning of the allocation in the kernel module\n");
 	if (private == PVTPOOL_ALLOC_NOREPLACE) {
 		void * old_page_va = page_va = page_to_virt(page);
-		if(__addr_in_gen_pool(mem_pool, (unsigned long)old_page_va, PAGE_SIZE)) {
+		if(__addr_in_gen_pool(mem_pool[current->mm->prof_info->cpu_id], (unsigned long)old_page_va, PAGE_SIZE)) {
 			return page;
 		}
 	} else if (private == IS_PVTPOOL_PARAMS) {
@@ -376,11 +450,8 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 		if ((params->vma->vm_flags & VM_ALLOC_PVT_CORE) == 0)
 			return NULL;
 	}
-	//if (params->vma->vm_mm)
-	  ///  printk("params->vma is not  NULL\n");
-	//apply_to_page_range(params->vma->vm_mm, params->vma->vm_start, params->vma->vm_end - params->vma->vm_start,cacheability_modifier,params);
 	
-	page_va = (void *)gen_pool_alloc(mem_pool, PAGE_SIZE);
+	page_va = (void *)gen_pool_alloc(mem_pool[1], PAGE_SIZE);
 
         printk("POOL: Allocating VA: 0x%08lx\n", (unsigned long)page_va);
 
@@ -405,7 +476,7 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 int __my_free_pvtpool_page (struct page * page)
 {
  	void * page_va;
-	//	int i;
+	int i;
 	
 	if(!current)
 	{
@@ -413,15 +484,15 @@ int __my_free_pvtpool_page (struct page * page)
 		return 1;
 	}
 
-	//for (i = 0; i < 4; i++){
-		if (!mem_pool || !page){
+	for (i = 0; i < mem_no; i++){
+		if (!mem_pool[i] || !page){
 			printk("one of mem_pool or/and page are NULL :|\n");
 			return 1;
 		}
        
 		page_va = page_to_virt(page);
        
-		if(__addr_in_gen_pool(mem_pool, (unsigned long)page_va, PAGE_SIZE)) {
+		if(__addr_in_gen_pool(mem_pool[i], (unsigned long)page_va, PAGE_SIZE)) {
 		  printk("Dynamic de-allocation for phys page 0x%08llx\n",
 			       page_to_phys(page));
 
@@ -429,7 +500,7 @@ int __my_free_pvtpool_page (struct page * page)
 			if (verbose)
 				dump_page(page, "pool dealloc debug");
 
-			gen_pool_free(mem_pool, (unsigned long)page_va, PAGE_SIZE);
+			gen_pool_free(mem_pool[i], (unsigned long)page_va, PAGE_SIZE);
 
 			--__in_pool;
 
@@ -437,7 +508,7 @@ int __my_free_pvtpool_page (struct page * page)
 
 			return 0;
 		}
-		//}
+	}
 
         return 1;
 
@@ -447,17 +518,52 @@ int __my_free_pvtpool_page (struct page * page)
 
 static int mm_exp_load(void){
 
-  int ret[4] = {-1,-1,-1,-1};
-  //	int i;
-  //int ret = -1;
-	
-  //MEM_START_LO[0] = 0x10000000UL;
+	int init;
+	int* ret;
 
+	
+	pool_range();
+	printk("outside the pool_range() and mem_no is:%d\n",mem_no);
+	//int ret[mem_no];
+    
+        ret = kmalloc(mem_no*sizeof(int),GFP_KERNEL);
+
+	init = initializer(ret);
+        if (init == 0)
+                printk("init is %d\n",init);
+        printk("after mem_pool initialization\n");
+	
+        /* Install handler for pages released by the kernel at task completion 
+and for changing page-level cacheability*/
+	free_pvtpool_page = __my_free_pvtpool_page;
+        alloc_pvtpool_page = alloc_pool_page;
+        cacheability_modifier = __cacheability_modifier;
+
+	pr_info("KPROFILER module installed successfully.\n");
+
+	return 0;
+
+	
+	//MEM_START_LO[0] = 0x10000000UL;
+	//MEM_START =  kmalloc(mem_no*sizeof(unsigned long),GFP_KERNEL);
+	/* for (z = 0; z < mem_no; z++) */
+	/* { */
+	/* 	ret[z] = -1; */
+	/* } */
+
+	/* printk("after ret thing\n"); */
+	//for (i = 0; i < mem_no; i++)
+	//{ WO for, bc is not array of array
+	//mem = kmalloc(mem_no*sizeof(struct MemRange),GFP_KERNEL);
+		//}
+
+	/* mem_pool = kmalloc(mem_no*sizeof(struct gen_pool*),GFP_KERNEL); */
 	 
-        /* for (i = 0; i < 4; i++) */
-  	/*   { */
-	/*     mem_pool[i] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL); */
-	/*   } */
+	/* for (j = 0; j < mem_no; j++) */
+	/* { */
+	/* 	mem_pool[j] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL); */
+	/* } */
+
 	/* for ( i = 1; i < 4; i++) */
 	/*   { */
 	/*     MEM_START_LO[i] =  MEM_START_LO[i-1]+MEM_SIZE; */
@@ -465,78 +571,68 @@ static int mm_exp_load(void){
 
 
 	/* Now try to remap memory at a known physical address. For both LO and HI range */
-        printk("Remapping PRIVATE_LO reserved memory area\n");
-	printk("before pool_range\n");
-	pool_range();
-	printk("after pool_range(): size and start are filled\n");
 
-        /* Setup pagemap structure to guide memremap_pages operation */
-	//for (  i = 0; i < 4; i++)
-	//{
-		__pool_kva_lo = memremap(mem[0].start, mem[0].size, MEMREMAP_WB);
 
-		if (__pool_kva_lo == 0) {
-			pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n",
-			       MEM_START[0]);
-			goto unmap;
-		}
+	/* Setup pagemap structure to guide memremap_pages operation */
+	/* for (i = 0; i < mem_no; i++) */
+	/* { */
+	/* 	__pool_kva_lo[i] = (unsigned long)memremap(mem[i].start, mem[i].size, MEMREMAP_WB); */
 
-		ret[0] = 0;
-		//}
+	/* 	if (__pool_kva_lo[i] == 0) { */
+	/* 		pr_err("Unable to request memory region @ 0x%08lx. Exiting.\n", */
+	/* 		       mem[i].start); */
+	/* 		goto unmap; */
+	/* 	} */
+
+	/* 	ret[i] = 0; */
+	/* } */
         
 	 
-		//for (i = 0; i < 4; i++)
-		//{
-		mem_pool = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
-		ret[0] |= gen_pool_add(mem_pool, (unsigned long)__pool_kva_lo,
-				       mem[0].size, NUMA_NODE_THIS);
+	/* for (i = 0; i < mem_no; i++) */
+	/* { */
+	/* 	mem_pool[i] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS); */
+	/* 	ret[i] |= gen_pool_add(mem_pool[i], (unsigned long)__pool_kva_lo[i], */
+	/* 			       mem[i].size, NUMA_NODE_THIS); */
 
-		if (ret[0] != 0) {
-			pr_err("Unable to initialize genalloc memory pool.\n");
-			goto unmap;
-		}
-		//}	
+	/* 	if (ret[i] != 0) { */
+	/* 		pr_err("Unable to initialize genalloc memory pool.\n"); */
+	/* 		goto unmap; */
+	/* 	} */
+	/* }	 */
         
-
-	/* Install handler for pages released by the kernel at task completion */
-        free_pvtpool_page = __my_free_pvtpool_page;
-	alloc_pvtpool_page = alloc_pool_page;
-	cacheability_modifier = __cacheability_modifier;
-
-	pr_info("KPROFILER module installed successfully.\n");
+	/* kfree(mem); */ //where is better to have this kfree?
+	
 
 
-	return 0;
-
-unmap:
-	printk("for now: here is unmap!\n");
-	//if (use_hipool)
-	//	memunmap(__pool_kva_hi);
-//unmap_lo:
-//	if (use_lopool)
-//		memunmap(__pool_kva_lo);
-//release:
-        return -1;
+/* unmap: */
+/* 	printk("for now: here is unmap!\n"); */
+/* 	//if (use_hipool) */
+/* 	//	memunmap(__pool_kva_hi); */
+/* 	//unmap_lo: */
+/* 	//	if (use_lopool) */
+/* 	//		memunmap(__pool_kva_lo); */
+/* 	//release: */
+/* 	return -1; */
 }
 
 static void mm_exp_unload(void)
 {
-  //int i;
+  int i;
 	printk("POOL: [UNLOAD] Current allocation: %d pages\n", __in_pool);
 
 	/* destroy genalloc memory pool */
-	//for (i = 0; i < 4; i++)
-	//{
-	  if (mem_pool)
-	     gen_pool_destroy(mem_pool);
-	  //}
+	for (i = 0; i < mem_no; i++)
+	{
+	  if (mem_pool[i])
+	     gen_pool_destroy(mem_pool[i]);
+	  }
         
 
 	/* Unmap & release memory regions */
-	//for (i = 0; i < 4; i++)
-	//{
-		memunmap((void *)__pool_kva_lo);
-		//}
+	for (i = 0; i < mem_no; i++)
+	{
+		memunmap((void *)__pool_kva_lo[i]);
+		}
 
 
 	/* Release handler of page deallocations */
