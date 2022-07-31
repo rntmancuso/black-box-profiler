@@ -2,6 +2,15 @@
 generates memory pools from those mem infrastructures, benchmarks these different memories
 for modeling them by collecting peak bw,...., and presents it (memory profiler's output) as
 ...*/
+#include <asm-generic/timex.h>
+#include <linux/kasan-checks.h>
+#include <asm/arch_timer.h>
+#include <clocksource/arm_arch_timer.h>                                                         
+#include <asm/barrier.h> //getting counter                                                          
+#include <asm/hwcap.h>
+#include <asm/sysreg.h>
+#include <asm/unistd.h>
+#include <linux/timex.h> //using get_cycles 
 
 #include <linux/version.h>
 #include <linux/init.h>
@@ -47,6 +56,12 @@ for modeling them by collecting peak bw,...., and presents it (memory profiler's
 #include <linux/smp.h>   /* for on_each_cpu */
 #include <linux/kallsyms.h>
 #include <linux/genalloc.h>
+
+/* #include <linux/timex.h> //using get_cycles */
+/* #include <asm/barrier.h> //getting counter */
+/* #include <asm/hwcap.h> */
+/* #include <asm/sysreg.h> */
+
 
 #if LINUX_VERSION_CODE > KERNEL_VERSION(4, 13, 0)
 #  include <linux/sched/types.h>
@@ -99,6 +114,15 @@ OCM
 DRAM
 ***************/
 
+/* #define aarch_counter_enforce_ordering(val) do {			\ */
+/* 	u64 tmp, _val = (val);						\ */
+/* 									\ */
+/* 	asm volatile(							\ */
+/* 	"	eor	%0, %1, %1\n"					\ */
+/* 	"	add	%0, sp, %0\n"					\ */
+/* 	"	ldr	xzr, [%0]"					\ */
+/* 	: "=r" (tmp) : "r" (_val));					\ */
+/* } while (0) */
 
 //unsigned long MEM_START[4]; //array for keeping the start address of each memory pool
 //unsigned long MEM_SIZE[4];  //size of each memory pool
@@ -107,6 +131,10 @@ DRAM
 int mem_no = 0; //for now, but I think is better to pass it rather than having as general
 
 #define NUMA_NODE_THIS    -1
+
+#define CACHE_LINE  64
+#define BUFFER_SIZE 5*1024*1024
+volatile uint64_t g_nread = 0;	           /* number of bytes read */
 
 extern void __clean_inval_dcache_area(void * kaddr, size_t size);
 
@@ -140,7 +168,8 @@ struct MemRange
 
 //for keeping reg property of memory device node in dtb
 //struct MemRange mem[4]; 
-struct MemRange *mem;   
+struct MemRange *mem;
+
 
 /* The kernel was modified to invoke an implementable function with *
  * the following prototype before returning any page to the per-CPU *
@@ -180,6 +209,19 @@ static bool __addr_in_gen_pool(struct gen_pool *pool, unsigned long start,
         rcu_read_unlock();
         return found;
 }
+
+/* static __always_inline u64 get_cntpct(void) */
+/* { */
+
+/* 	u64 cnt; */
+
+/* 	asm volatile(ALTERNATIVE("isb\n mrs %0, cntpct_el0", */
+/* 				 "nop\n" __mrs_s("%0", SYS_CNTPCTSS_EL0), */
+/* 				 ARM64_HAS_ECV) */
+/* 		     : "=r" (cnt)); */
+/* 	arch_counter_enforce_ordering(cnt); */
+/* 	return cnt; */
+/* } */
 
 ///*static int*/ void pool_range(void)// why static int? //designing error handling path
 void pool_range(void){
@@ -283,7 +325,7 @@ static int initializer(int* ret)
 
 		ret[i] = 0;
         }
-	
+	/*creating memory pools for different memory technologies*/
 	for (i = 0; i < mem_no; i++)
         {
                 mem_pool[i] = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
@@ -304,6 +346,61 @@ unmap:
 	printk("for now: here is unmap!\n");
 	return -1;
 	
+}
+
+/* void test(void) */
+/* { */
+/*   cycles_t start,end; */
+/*   start = get_cycles(); */
+/*   printk("for test\n"); */
+/*   end = get_cycles(); */
+/*   printk("elapsed time is:%ld\n",end-start); */
+/* } */
+int64_t bench_read(void* buffer_va)
+{
+	int i;	
+	int64_t sum = 0;
+	for ( i = 0; i < BUFFER_SIZE/4; i+=(CACHE_LINE/4) ) {
+		sum += *(long long int*)(buffer_va + i);
+	}
+	g_nread += BUFFER_SIZE;
+	return sum;
+}
+
+/*static int*/void  bandwidth_measurment(void)
+{
+	unsigned int cpu;
+	cycles_t start,end;
+	void * buffer_va; // virtual addr of kernel
+	int64_t sum_read = 0;
+        //volatile uint64_t g_nread = 0;/* number of bytes read */
+	printk("before gen_pool_alloc\n");
+        //allocating buffer, buffer_va is the beginning addr
+	buffer_va = (void *)gen_pool_alloc(mem_pool[2/*current->mm->prof_info->cpu_id*/], BUFFER_SIZE);
+        printk("VA of beginning of the buffer: 0x%08lx\n", (unsigned long)buffer_va);
+
+        if (!buffer_va) {
+                //pr_err("Unable to allocate page from colored pool.\n");                                                                            
+                //return NULL;
+		printk("unable to allocate buffer.\n");
+        }
+	
+	//accessing memory
+	cpu = get_cpu();
+	start = get_cycles();
+	
+	printk("cpu ID is = %d\n",cpu);
+
+	sum_read = bench_read(buffer_va/*,g_nread*/);
+	printk("sum_read is %lld\n",sum_read);
+	  /*for i = 0, i < what size? bigger than LLC, i+CACHE_LINE                                                                      
+         read from the buffer (dereference the address) [function for read operation]                                                  
+        addr + CACHE_LINE*/
+	
+	
+	end = get_cycles();
+	printk("elapsed time is: %ld cycles\n", (end-start));
+	put_cpu();
 }
 	
 static int cacheability_mod (pte_t *ptep, unsigned long addr,void *data)
@@ -383,7 +480,7 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 			return NULL;
 	}
 	
-	page_va = (void *)gen_pool_alloc(mem_pool[1], PAGE_SIZE);
+	page_va = (void *)gen_pool_alloc(mem_pool[/*1*/current->mm->prof_info->cpu_id], PAGE_SIZE);
 
         printk("POOL: Allocating VA: 0x%08lx\n", (unsigned long)page_va);
 
@@ -454,7 +551,7 @@ static int mm_exp_load(void){
 	int* ret;
 
 	
-	pool_range();
+	pool_range(); //reading start and size from dtb for making memory pools
 	printk("outside the pool_range() and mem_no is:%d\n",mem_no);
 	//int ret[mem_no];
     
@@ -465,6 +562,9 @@ static int mm_exp_load(void){
         if (init == 0)
                 printk("init is %d\n",init);
         printk("after mem_pool initialization\n");
+
+	bandwidth_measurment();
+	//test();
 	
         /* Install handler for pages released by the kernel at task completion 
 	   and for changing page-level cacheability*/
