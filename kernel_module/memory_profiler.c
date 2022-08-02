@@ -1,15 +1,7 @@
 /*memory profiler: reads different memory infrastructures from the dtb of the kernel,
-generates memory pools from those mem infrastructures, benchmarks these different memories
-for modeling them by collecting peak bw,...., and presents it (memory profiler's output) as
-...*/
-/* #include <asm-generic/timex.h> */
-/* #include <linux/kasan-checks.h> */
-/* #include <asm/arch_timer.h> */
-/* #include <clocksource/arm_arch_timer.h> */
-/* #include <asm/barrier.h> //getting counter */
-/* #include <asm/hwcap.h> */
-/* #include <asm/sysreg.h> */
-/* #include <asm/unistd.h> */
+  generates memory pools from those mem infrastructures, benchmarks these different memories
+  for modeling them by collecting peak bw,...., and presents it (memory profiler's output) as
+  ...*/
 #include <linux/timex.h> //using get_cycles 
 
 #include <linux/version.h>
@@ -57,7 +49,7 @@ for modeling them by collecting peak bw,...., and presents it (memory profiler's
 #include <linux/kallsyms.h>
 #include <linux/genalloc.h>
 #include <linux/timekeeping.h>
-#include <linux/delay.h>
+#include <linux/delay.h> /*for msleeo() using as test*/
 
 /* #include <linux/timex.h> //using get_cycles */
 /* #include <asm/barrier.h> //getting counter */
@@ -97,13 +89,13 @@ module_param(verbose, int, 0660);
                         pr_info("[KPROF] " format, ##__VA_ARGS__);	\
         } while (0)
 #else
-#define DBG_PRINT(format, ...)                          \
+#define DBG_PRINT(format, ...)			\
         {}
 #endif
 
-#define DBG_INFO(format, ...)						\
-        do {                                                            \
-		pr_info("[KPROF] " format, ##__VA_ARGS__);		\
+#define DBG_INFO(format, ...)					\
+        do {							\
+		pr_info("[KPROF] " format, ##__VA_ARGS__);	\
         } while (0)
 
 
@@ -153,10 +145,10 @@ struct MemRange *mem;
 
 unsigned int get_usecs(void)
 {
-  //ktime_t time;
-  struct timeval time; //inclduing sec and ns or us?
-  time = ktime_to_timeval(ktime_get_real());
-  return (time.tv_sec * 1000000 + time.tv_usec);
+	//ktime_t time;
+	struct timeval time; //inclduing sec and ns or us?
+	time = ktime_to_timeval(ktime_get_real());
+	return (time.tv_sec * 1000000 + time.tv_usec);
   
 }
 
@@ -311,38 +303,41 @@ int64_t bench_read(void* buffer_va)
 	int64_t sum_read = 0;
         //volatile uint64_t g_nread = 0;/* number of bytes read */
 	printk("before gen_pool_alloc\n");
-        //allocating buffer, buffer_va is the beginning addr
+
+	/*allocating buffer, buffer_va is the beginning addr*/
 	buffer_va = (void *)gen_pool_alloc(mem_pool[2/*current->mm->prof_info->cpu_id*/], BUFFER_SIZE);
         printk("VA of beginning of the buffer: 0x%08lx\n", (unsigned long)buffer_va);
 
         if (!buffer_va) {
-                //pr_err("Unable to allocate page from colored pool.\n");                                                                            
-                //return NULL;
 		printk("unable to allocate buffer.\n");
         }
-	
-	//accessing memory
+
+	/*benchmarking operation*/
 	cpu = get_cpu();
 	//start = get_cycles();
 	g_start = get_usecs();
 	
 	printk("cpu ID is = %d\n",cpu);
-
+	//accessing the memory
 	sum_read = bench_read(buffer_va/*,g_nread*/);
 	printk("sum_read is %lld\n",sum_read);	
+
 	//msleep(10); /*for test*/
+
 	//end = get_cycles();
 	g_end = get_usecs();
 	dur = g_end - g_start;
+	put_cpu();
 	//printk("elapsed time is: %ld cycles\n", (end-start));
         printk("elapsed = ( %d usec )\n", dur);
-	put_cpu();
+	//put_cpu();
 
 	//bandwidth calculation
 	printk("g_nread(bytes read) = %lld\n", (long long)g_nread);
 	bw = g_nread / dur;
-	printk("B/W = %ld MB/s | ", bw);
+	printk("B/W = %ld B/s", bw);
 
+	/*freeing the buffer*/
 	gen_pool_free(mem_pool[2], (unsigned long)buffer_va, BUFFER_SIZE);
 }
 	
@@ -366,14 +361,7 @@ static int mm_exp_load(void){
                 printk("init is %d\n",init);
         printk("after mem_pool initialization\n");
 
-	bandwidth_measurment();
-	//test();
-	
-        /* Install handler for pages released by the kernel at task completion 
-	   and for changing page-level cacheability*/
-	/* free_pvtpool_page = __my_free_pvtpool_page; */
-        /* alloc_pvtpool_page = alloc_pool_page; */
-        /* cacheability_modifier = __cacheability_modifier; */
+	bandwidth_measurment(); /*benchmarking the bandwidth*/
 
 	pr_info("KPROFILER module installed successfully.\n");
 
@@ -385,14 +373,13 @@ static int mm_exp_load(void){
 static void mm_exp_unload(void)
 {
 	int i;
-	//printk("POOL: [UNLOAD] Current allocation: %d pages\n", __in_pool);
 
 	/* destroy genalloc memory pool */
 	for (i = 0; i < mem_no; i++)
 	{
-	  //printk("for check\n");
-	  if (mem_pool[i]){
-	    //gen_pool_destroy(mem_pool[i]);
+	
+		if (mem_pool[i]){
+	                gen_pool_destroy(mem_pool[i]);
 			printk("destroying happened successfully\n");}
 	}
         
@@ -400,17 +387,8 @@ static void mm_exp_unload(void)
 	/* Unmap & release memory regions */
 	for (i = 0; i < mem_no; i++)
 	{
-	  //  printk("for check\n");
 		memunmap((void *)__pool_kva_lo[i]);
 	}
-
-
-	/* Release handler of page deallocations */
-	/* free_pvtpool_page = NULL; */
-	/* alloc_pvtpool_page = NULL; */
-	/* cacheability_modifier = NULL; */
-
-
 
 	pr_info("KPROFILER module uninstalled successfully.\n");
 }
