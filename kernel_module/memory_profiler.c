@@ -119,7 +119,7 @@ int mem_no = 0; //for now, but I think is better to pass it rather than having a
 
 #define CACHE_LINE  64
 #define BUFFER_SIZE 5*1024*1024            /*size of buffer we read from/write to for benchmarking*/
-volatile uint64_t g_nread = 0;	           /* number of bytes read */
+#define MY_TYPE int                        /*type of data in allocated buffer which we read/write*/
 volatile unsigned int g_start;		   /* starting time */
 volatile unsigned int g_end;               /* ending time */
 
@@ -277,36 +277,33 @@ unmap:
 	
 }
 
-int64_t bench_read(void* buffer_va)
+int64_t bench_read(int*  buffer_va, uint64_t* g_nread)
 {
-	int i;	
+	int i;
 	int64_t sum = 0;
-	for ( i = 0; i < BUFFER_SIZE/4; i+=(CACHE_LINE/4) ) {
-		sum += *(long long int*)(buffer_va + i);
+	//int count = 0;  
+	for ( i = 0; i < BUFFER_SIZE/sizeof(MY_TYPE); i+=(CACHE_LINE/sizeof(MY_TYPE)) ) {
+	  sum += buffer_va[i];
+	  //count++;
 	}
-	g_nread += BUFFER_SIZE;
+	*(g_nread) += BUFFER_SIZE;// here g_nread is adddr, we received as addr 
+	//printk("number of iteration in the memory buffer is: %d\n", count);
 	return sum;
 }
-
-/* void bw_calculation() */
-/* { */
-  
-/* } */
 
 /*static int*/void  bandwidth_measurment(void)
 {
 	unsigned int cpu;
-	cycles_t start,end;
+	//cycles_t start,end;
 	unsigned int dur;
-	long int bw;
-	void * buffer_va; // virtual addr of kernel
+	long int bw,i;
+	int* buffer_va; // virtual addr of kernel, data we want to read from/wr to our buffer is type of int
 	int64_t sum_read = 0;
-        //volatile uint64_t g_nread = 0;/* number of bytes read */
-	printk("before gen_pool_alloc\n");
+        volatile uint64_t g_nread = 0;/* number of bytes read */
 
 	/*allocating buffer, buffer_va is the beginning addr*/
-	buffer_va = (void *)gen_pool_alloc(mem_pool[2/*current->mm->prof_info->cpu_id*/], BUFFER_SIZE);
-        printk("VA of beginning of the buffer: 0x%08lx\n", (unsigned long)buffer_va);
+	buffer_va = (int *) gen_pool_alloc(mem_pool[2/*current->mm->prof_info->cpu_id*/], BUFFER_SIZE);
+        printk("VA of beginning of the buffer: 0x%08lx\n",(unsigned long)buffer_va);
 
         if (!buffer_va) {
 		printk("unable to allocate buffer.\n");
@@ -314,23 +311,26 @@ int64_t bench_read(void* buffer_va)
 
 	/*benchmarking operation*/
 	cpu = get_cpu();
+	printk("cpu ID is = %d\n",cpu);
 	//start = get_cycles();
 	g_start = get_usecs();
 	
-	printk("cpu ID is = %d\n",cpu);
 	//accessing the memory
-	sum_read = bench_read(buffer_va/*,g_nread*/);
-	printk("sum_read is %lld\n",sum_read);	
+	//for (i = 0; i < 10; i++)
+	//{
+	sum_read = bench_read(buffer_va, &g_nread);// pass ass pointer to keep changes
+	//}
 
 	//msleep(10); /*for test*/
 
 	//end = get_cycles();
 	g_end = get_usecs();
-	dur = g_end - g_start;
+	
 	put_cpu();
+
+	dur = g_end - g_start;
 	//printk("elapsed time is: %ld cycles\n", (end-start));
         printk("elapsed = ( %d usec )\n", dur);
-	//put_cpu();
 
 	//bandwidth calculation
 	printk("g_nread(bytes read) = %lld\n", (long long)g_nread);
