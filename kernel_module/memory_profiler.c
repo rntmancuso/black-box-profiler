@@ -118,7 +118,7 @@ int mem_no = 0; //for now, but I think is better to pass it rather than having a
 #define NUMA_NODE_THIS    -1
 
 #define CACHE_LINE  64
-#define BUFFER_SIZE 5*1024*1024            /*size of buffer we read from/write to for benchmarking*/
+#define BUFFER_SIZE 1*1024*1024            /*size of buffer we read from/write to for benchmarking*/
 #define MY_TYPE int                        /*type of data in allocated buffer which we read/write*/
 volatile unsigned int g_start;		   /* starting time */
 volatile unsigned int g_end;               /* ending time */
@@ -138,6 +138,13 @@ struct MemRange
 	unsigned long start;
 	unsigned long size;
 };
+
+/* struct BWInfo */
+/* { */
+/* 	volatile uint64_t g_nread; */
+/* 	int* buffer_va; */
+  
+/* }; */
 
 //for keeping reg property of memory device node in dtb
 //struct MemRange mem[4]; 
@@ -277,7 +284,9 @@ unmap:
 	
 }
 
-int64_t bench_read(int*  buffer_va, uint64_t* g_nread)
+
+
+int64_t bench_read(int*  buffer_va, volatile uint64_t* g_nread)
 {
 	int i;
 	int64_t sum = 0;
@@ -286,17 +295,28 @@ int64_t bench_read(int*  buffer_va, uint64_t* g_nread)
 	  sum += buffer_va[i];
 	  //count++;
 	}
-	*(g_nread) += BUFFER_SIZE;// here g_nread is adddr, we received as addr 
+	*(g_nread) += BUFFER_SIZE;// here g_nread is addr, we received as addr 
 	//printk("number of iteration in the memory buffer is: %d\n", count);
 	return sum;
 }
 
+static void test_local_cpu(void* info)
+{
+  /* int i; */
+/*   for (i = 0; i < 1000; i++) */
+/*     { */
+/*       um_read += bench_read(buffer_va, &g_nread);// pass as pointer to keep changes */
+/*     } */
+	printk("Hello, we are on core: %d\n",smp_processor_id());
+ } 
+
 /*static int*/void  bandwidth_measurment(void)
 {
-	unsigned int cpu;
+         //unsigned int this_cpu;
 	//cycles_t start,end;
 	unsigned int dur;
 	long int bw,i;
+	int retval;
 	int* buffer_va; // virtual addr of kernel, data we want to read from/wr to our buffer is type of int
 	int64_t sum_read = 0;
         volatile uint64_t g_nread = 0;/* number of bytes read */
@@ -309,33 +329,50 @@ int64_t bench_read(int*  buffer_va, uint64_t* g_nread)
 		printk("unable to allocate buffer.\n");
         }
 
-	/*benchmarking operation*/
-	cpu = get_cpu();
-	printk("cpu ID is = %d\n",cpu);
-	//start = get_cycles();
+	for ( i = 0; i < BUFFER_SIZE/sizeof(MY_TYPE); i++)
+	  {
+	    buffer_va[i] = i;
+	  }
+
 	g_start = get_usecs();
 	
-	//accessing the memory
-	//for (i = 0; i < 10; i++)
-	//{
-	sum_read = bench_read(buffer_va, &g_nread);// pass ass pointer to keep changes
-	//}
+	retval = smp_call_function_single(1, test_local_cpu,NULL,false);
+	if (retval != 0)
+	  {
+	    printk("error!!!\n");//what are right questions to ask to design error handling paths?
+	  }
 
-	//msleep(10); /*for test*/
-
-	//end = get_cycles();
 	g_end = get_usecs();
 	
-	put_cpu();
+
+	/* /\*benchmarking operation*\/ */
+	/* this_cpu = get_cpu(); */
+	/* printk("cpu ID is = %d\n",this_cpu); */
+	/* //start = get_cycles(); */
+	/* g_start = get_usecs(); */
+	
+	/* //accessing the memory */
+	/* for (i = 0; i < 1000; i++) */
+	/* { */
+	/* sum_read += bench_read(buffer_va, &g_nread);// pass as pointer to keep changes */
+	/* } */
+
+	/* //msleep(10); /\*for test*\/ */
+
+	/* //end = get_cycles(); */
+	/* g_end = get_usecs(); */
+	
+
+	/* put_cpu(); */
 
 	dur = g_end - g_start;
 	//printk("elapsed time is: %ld cycles\n", (end-start));
-        printk("elapsed = ( %d usec )\n", dur);
+        printk("elapsed = (%d usec), sum_read = (%lld)\n", dur, sum_read);
 
 	//bandwidth calculation
-	printk("g_nread(bytes read) = %lld\n", (long long)g_nread);
+	printk("g_nread(bytes read) = %lld\n", (uint64_t)g_nread);
 	bw = g_nread / dur;
-	printk("B/W = %ld B/s", bw);
+	printk("B/W = %ld MB/s", bw);
 
 	/*freeing the buffer*/
 	gen_pool_free(mem_pool[2], (unsigned long)buffer_va, BUFFER_SIZE);
@@ -347,10 +384,11 @@ static int mm_exp_load(void){
 
 	int init;
 	int* ret;
-
+	
+	printk(KERN_INFO "Online CPUs: %d, Present CPUs: %d\n", num_online_cpus(),num_present_cpus());
 	
 	pool_range(); //reading start and size from dtb for making memory pools
-	printk("outside the pool_range() and mem_no is:%d\n",mem_no);
+	//printk("outside the pool_range() and mem_no is:%d\n",mem_no);
 	//int ret[mem_no];
     
         ret = kmalloc(mem_no*sizeof(int),GFP_KERNEL);
