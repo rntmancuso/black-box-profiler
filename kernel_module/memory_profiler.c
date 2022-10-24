@@ -50,6 +50,7 @@
 #include <linux/genalloc.h>
 #include <linux/timekeeping.h>
 #include <linux/delay.h> /*for msleeo() using as test*/
+#include <linux/cpumask.h>
 
 /* #include <linux/timex.h> //using get_cycles */
 /* #include <asm/barrier.h> //getting counter */
@@ -102,7 +103,7 @@ module_param(verbose, int, 0660);
 
 /**************for physical memory based on dtb 
 memory type, MEM_START, MEM_SIZE
-BRAM          
+BRAM         
 FPGA-DRAM           0xfffc0000UL 
 OCM
 DRAM
@@ -118,19 +119,28 @@ int mem_no = 0; //for now, but I think is better to pass it rather than having a
 #define NUMA_NODE_THIS    -1
 
 #define CACHE_LINE  64
-#define BUFFER_SIZE 1*1024*1024            /*size of buffer we read from/write to for benchmarking*/
+//#define BUFFER_SIZE 16*1024*1024            /*size of buffer we read from/write to for benchmarking*/
 #define MY_TYPE int                        /*type of data in allocated buffer which we read/write*/
 volatile unsigned int g_start;		   /* starting time */
 volatile unsigned int g_end;               /* ending time */
+volatile int mywait = 1;                               //global var to tell activities on other core to start/stop
 
 /* Handle for remapped memory */
 unsigned long  __pool_kva_lo[4];
 //static void * __pool_kva_lo = NULL
 
+/*Initializing spinlocks statically*/
+//DEFINE_SPINLOCK(my_lock);
+/* static spinlock_t my_lock[3] = { */
+/* 	__SPIN_LOCK_UNLOCKED(my_lock_0), */
+/* 	__SPIN_LOCK_UNLOCKED(my_lock_1), */
+/* 	__SPIN_LOCK_UNLOCKED(my_lock_2), */
+/* }; */
+/*defining spinlocks this way for dynamic initialization*/
+static spinlock_t my_lock[4]; // one lock per core
 
 struct gen_pool ** mem_pool;
 //struct gen_pool * mem_pool[4];
-//struct gen_pool * mem_pool = NULL;
 
 
 struct MemRange
@@ -139,12 +149,13 @@ struct MemRange
 	unsigned long size;
 };
 
-/* struct BWInfo */
-/* { */
-/* 	volatile uint64_t g_nread; */
-/* 	int* buffer_va; */
+struct activityInfo
+{
+	volatile uint64_t g_nread; /* number of bytes read */  
+	int* buffer_va; /*kvirt addr of beginning of the buffer*/
+	unsigned long int buffer_size;
   
-/* }; */
+};
 
 //for keeping reg property of memory device node in dtb
 //struct MemRange mem[4]; 
@@ -236,7 +247,7 @@ void pool_range(void){
 static int initializer(int* ret)
 {
 	int i;
-	
+	printk("mem_ni is : %d\n",mem_no);
 	for (i = 0; i < mem_no; i++)
         {
                 ret[i] = -1;
@@ -286,63 +297,259 @@ unmap:
 
 
 
-int64_t bench_read(int*  buffer_va, volatile uint64_t* g_nread)
+int64_t bench_read(struct activityInfo* myinfo)
 {
 	int i;
 	int64_t sum = 0;
-	//int count = 0;  
-	for ( i = 0; i < BUFFER_SIZE/sizeof(MY_TYPE); i+=(CACHE_LINE/sizeof(MY_TYPE)) ) {
-	  sum += buffer_va[i];
-	  //count++;
+	//int count = 0;
+	for ( i = 0; i < myinfo->buffer_size/sizeof(MY_TYPE); i+=(CACHE_LINE/sizeof(MY_TYPE)) ) {
+		sum += myinfo->buffer_va[i];
+		//count++;
 	}
-	*(g_nread) += BUFFER_SIZE;// here g_nread is addr, we received as addr 
+	myinfo->g_nread += myinfo->buffer_size;// here g_nread is addr, we received as addr 
 	//printk("number of iteration in the memory buffer is: %d\n", count);
 	return sum;
 }
 
-static void test_local_cpu(void* info)
+int buffer_allocation(struct activityInfo* myinfo) 
+{ 
+	int i;
+
+	/*allocating buffer, buffer_va is the beginning addr*/
+        myinfo->buffer_va = (int *) gen_pool_alloc(mem_pool[2], myinfo->buffer_size);
+        printk("VA of beginning of the buffer: 0x%08lx\n",(unsigned long)(myinfo->buffer_va));
+
+        if (!(myinfo->buffer_va)) {
+                printk("unable to allocate buffer.\n");
+		return 1;
+        }
+
+        for ( i = 0; i < myinfo->buffer_size/sizeof(MY_TYPE); i++)
+        {
+                myinfo->buffer_va[i] = i;
+        }
+
+	return 0;
+} 
+
+
+static void activity_stress(void* myinfo)
 {
-  /* int i; */
-/*   for (i = 0; i < 1000; i++) */
-/*     { */
-/*       um_read += bench_read(buffer_va, &g_nread);// pass as pointer to keep changes */
-/*     } */
-	printk("Hello, we are on core: %d\n",smp_processor_id());
- } 
+	struct activityInfo my_info;
+	unsigned long flags;
+	int i, retval;
+	int64_t sum;
+
+	local_irq_save(flags);
+	get_cpu();
+	printk("we are on cpu: %d\n",smp_processor_id());
+
+	spin_unlock(&my_lock[smp_processor_id()]);
+
+	/*allocating buffer*/
+	my_info.buffer_size = 1*1024*1024; //should we get this from outside?
+	printk("STRESS: before buffer_allocation()\n");
+
+	retval = buffer_allocation(&my_info);
+	if (retval != 0) {
+		printk("buffer_allocation() failed.\n");
+		//return;
+	}
+	/*main activity*/
+	while(mywait)
+	{		
+		for ( i = 0; i < my_info.buffer_size/sizeof(MY_TYPE); i+=(CACHE_LINE/sizeof(MY_TYPE)) ) {
+			sum += my_info.buffer_va[i];                                                                               	}
+	}
+	
+	spin_unlock(&my_lock[smp_processor_id()]);
+
+	/*freeing the buffer*/
+	gen_pool_free(mem_pool[2], (unsigned long)(my_info.buffer_va),my_info.buffer_size);
+        put_cpu();
+	local_irq_restore(flags);
+
+}
+
+static void activity_idle(void* myinfo)
+{
+	/* int count = 1000; */
+	/* printk("mywait is %d\n",mywait); */
+	/* while (1) */
+	/* { */
+	/* 	if (mywait != 0) */
+	/* 	{ */
+	/* 		count--; */
+	/* 		if (count < 0) */
+	/* 			break; */
+	/* 	} */
+	/* } */
+	/* printk("mywait is %d\n",mywait); */
+	unsigned long flags;
+	
+	local_irq_save(flags);
+	get_cpu();
+        printk("IDLE: mywait before while is %d\n",mywait);
+
+	spin_unlock(&my_lock[smp_processor_id()]);
+
+	/*main activity-busy loop*/
+	while (mywait)
+	{
+		//break;
+	}
+	//printk("mywait after while is %d\n",mywait);
+	spin_unlock(&my_lock[smp_processor_id()]);
+
+	put_cpu();
+	local_irq_restore(flags);
+
+}
 
 /*static int*/void  bandwidth_measurment(void)
 {
-         //unsigned int this_cpu;
 	//cycles_t start,end;
-	unsigned int dur;
-	long int bw,i;
-	int retval;
-	int* buffer_va; // virtual addr of kernel, data we want to read from/wr to our buffer is type of int
+	unsigned long flags; // for interrupt state
+	unsigned int dur, c;
+	long int bandwidth, i;
+	int retval, j, k, z, local_core, counter1, counter2;
+	struct cpumask mymask1, mymask2;
 	int64_t sum_read = 0;
-        volatile uint64_t g_nread = 0;/* number of bytes read */
+	struct activityInfo myinfo;
 
-	/*allocating buffer, buffer_va is the beginning addr*/
-	buffer_va = (int *) gen_pool_alloc(mem_pool[2/*current->mm->prof_info->cpu_id*/], BUFFER_SIZE);
-        printk("VA of beginning of the buffer: 0x%08lx\n",(unsigned long)buffer_va);
+	myinfo.g_nread = 0;
+        myinfo.buffer_size = 16*1024*1024; ///should I get this from user?
 
-        if (!buffer_va) {
-		printk("unable to allocate buffer.\n");
-        }
+	/*allocating buffer for benchmarking*/
+	retval = buffer_allocation(&myinfo);
+	if (retval != 0) {
+		printk("buffer_allocation() failed.\n");
+	}
 
-	for ( i = 0; i < BUFFER_SIZE/sizeof(MY_TYPE); i++)
-	  {
-	    buffer_va[i] = i;
-	  }
-
-	g_start = get_usecs();
+	//Initializing locks
+	for (i = 0; i < 4; i++)
+	{
+		spin_lock_init(&my_lock[i]);
+		//spin_lock(&my_lock[i]);
+		//if locked, return value is 1
+		printk("lock is :%d",spin_is_locked(&my_lock[i]));
 	
-	retval = smp_call_function_single(1, test_local_cpu,NULL,false);
-	if (retval != 0)
-	  {
-	    printk("error!!!\n");//what are right questions to ask to design error handling paths?
-	  }
+	}
 
-	g_end = get_usecs();
+	local_irq_save(flags);
+	local_core = get_cpu();
+	printk("local_core is: %d\n",local_core);
+
+	/*main activity loop*/
+	for (j = 1; j < 4; j++)
+	{
+		/*reset masks at the begining of each iteration*/
+		cpumask_clear(&mymask1);
+		cpumask_clear(&mymask2);
+
+		//j = 3;
+		printk("mywait before mywait = 1 in the j = %d loop is %d\n",j,mywait);
+		mywait = 1;
+		counter1 = 0;
+		counter2 = 0;
+		printk("local core is(inside for): %d\n",local_core);
+		/*c is # of cores which run the activity*/
+		for ( c = 0; c < 4; c++) 
+		{
+	
+			if (c == local_core)
+				continue;
+
+			if (counter1 < j) //when we want just one core runs f1
+			{
+				//f1_mask.set(c);
+				cpumask_set_cpu(c,&mymask1);
+				counter1++;
+			}
+			else if (counter2 < (4-j))
+			{
+				cpumask_set_cpu(c,&mymask2);
+				counter2++;
+			}
+		
+		
+		}
+
+		/*for testing mymask*/
+		for (k = 0; k < 4; k++)
+		{
+			if(cpumask_test_cpu(k,&mymask1))
+				printk("mymask1 %d is set\n", k);
+			//if(cpumask_test_cpu(k,&mymask2))
+			//printk("mymask2 %d is set\n", k);
+
+		}
+
+		for (k = 0; k < 4; k++)
+		{
+			if(cpumask_test_cpu(k,&mymask2))
+				printk("mymask2 %d is set\n", k);
+			//if(cpumask_test_cpu(k,&mymask2))
+			//printk("mymask2 %d is set\n", k);
+
+		}
+
+		/*starting remote activities*/
+		on_each_cpu_mask(&mymask1,activity_idle,NULL,false);
+	        on_each_cpu_mask(&mymask2,activity_stress,NULL,false);
+
+		/*This way for all locks corresponding to all remote cores we are trying
+		  to grab the lock. spin_lock spins and tries to acquire the lock*/
+		for (z = 0; z < 4; z++)
+		{
+			if (z == local_core) continue; // we don want to spin on lock corresponds to local core
+			spin_lock(&my_lock[z]);
+			printk("lock is:%d",spin_is_locked(&my_lock[z]));
+		    
+		}
+
+		/*beginning of time mesurment*/
+		g_start = get_usecs();
+
+		//Benchmarking: accessing the memory
+		for (i = 0; i < 100; i++)
+		{
+			sum_read += bench_read(&myinfo);// pass as pointer to keep changes
+		}
+		    
+
+		g_end = get_usecs();
+
+		/*ending remote activities*/
+		mywait = 0;
+
+		for (z = 0; z < 4; z++)
+		{
+			if (z == local_core) continue; // we don want to spin on lock corresponds to local core
+			spin_lock(&my_lock[z]);
+		}
+
+		msleep(100);
+	       
+	} //j loop
+
+
+	put_cpu();
+
+	local_irq_restore(flags);
+
+	//
+	/* printk("g_nread is :%lld\n",myinfo.g_nread); */
+	/* smp_call_function_single(0, test_other_cpu,NULL,false); */
+	/* g_start = get_usecs(); */
+	
+	/* retval = smp_call_function_single(1, test_local_cpu,&myinfo,true); */
+	/* if (retval != 0) */
+	/*   { */
+	/*     printk("error!!!\n");//what are right questions to ask to design error handling paths? */
+	/*   } */
+
+	/* g_end = get_usecs(); */
 	
 
 	/* /\*benchmarking operation*\/ */
@@ -366,16 +573,16 @@ static void test_local_cpu(void* info)
 	/* put_cpu(); */
 
 	dur = g_end - g_start;
-	//printk("elapsed time is: %ld cycles\n", (end-start));
-        printk("elapsed = (%d usec), sum_read = (%lld)\n", dur, sum_read);
+//	printk("elapsed time is: %ld cycles\n", (end-start));
+	printk("elapsed = (%d usec)\n", dur);
 
 	//bandwidth calculation
-	printk("g_nread(bytes read) = %lld\n", (uint64_t)g_nread);
-	bw = g_nread / dur;
-	printk("B/W = %ld MB/s", bw);
+	printk("g_nread(bytes read) = %lld\n", (uint64_t)(myinfo.g_nread));
+	bandwidth = myinfo.g_nread / dur;
+	printk("B/W = %ld MB/s", bandwidth);
 
 	/*freeing the buffer*/
-	gen_pool_free(mem_pool[2], (unsigned long)buffer_va, BUFFER_SIZE);
+	gen_pool_free(mem_pool[2], (unsigned long)(myinfo.buffer_va), myinfo.buffer_size);
 }
 	
 
