@@ -68,7 +68,7 @@ void collect_profiling(struct profile * profile, struct trace_params * tparam,
 	if (new_vma) {
 		struct profiled_vma * new_entry;
 		new_entry = &profile->vmas[profile->profile_len-1];
-		new_entry->vma_index = vma->vma_index;
+		new_entry->vma_id = vma->vma_id;
 		new_entry->page_count = 0;
 		new_entry->pages = NULL;
 	}
@@ -139,8 +139,8 @@ void save_profile(char * filename, const struct vma_descr * vma_targets,
 	for (i = 0; i < profile->profile_len; ++i) {
 		struct profiled_vma * vma = &profile->vmas[i];
 
-		/* Write both vma_index and page_count since they are back-to-back */
-		pos += write(fd, (void *)&vma->vma_index, 2*sizeof(unsigned int));
+		/* Write both vma_id and page_count since they are back-to-back */
+		pos += write(fd, (void *)&vma->vma_id, 2*sizeof(unsigned int));
 
 		if (vma->page_count)
 			pos += write(fd, (void *)vma->pages,
@@ -192,10 +192,10 @@ void load_profile(char * filename, struct vma_descr ** vma_targets,
 
 	for (i = 0; i < profile_len; ++i) {
 		struct profiled_vma * vma = &profile->vmas[i];
-		read(fd, (void *)&vma->vma_index, 2 * sizeof(unsigned int));
+		read(fd, (void *)&vma->vma_id, 2 * sizeof(unsigned int));
 
 		DBG_PRINT("\tVMA %d (idx: %d) has %d pages.\n", i,
-			  vma->vma_index, vma->page_count);
+			  vma->vma_id, vma->page_count);
 
 		if (vma->page_count) {
 			ssize_t pg_size = vma->page_count * sizeof(struct profiled_vma_page);
@@ -364,7 +364,7 @@ void build_incremental_params(const struct profile * in_profile,
 	 * the VMAs detected at layout construction time. */
 	for (i = 0; i < out_profile->vma_count; ++i) {
 		for (j = 0; j < vma_count; ++j) {
-			if (vma_targets[j].vma_index == out_profile->vmas[i].vma_index) {
+			if (vma_targets[j].vma_id == out_profile->vmas[i].vma_id) {
 				out_profile->vmas[i].total_pages = vma_targets[j].total_pages;
 				out_profile->vmas[i].operation = __page_op;
 				//out_profile->vmas[i].operation = vma_targets[j].operation;
@@ -400,7 +400,7 @@ void set_profiling_page(struct profile_params * params,
 		params->vmas[0].page_count = 1;
 	}
 
-	params->vmas[0].vma_index = vma->vma_index;
+	params->vmas[0].vma_id = vma->vma_id;
 	params->vmas[0].total_pages = vma->total_pages;
 	params->vmas[0].page_index[0] = page_index;
 }
@@ -417,8 +417,8 @@ void print_profile(struct profile * profile)
 
 	for (i = 0; i < len; ++i) {
 		struct profiled_vma cur_vma = profile->vmas[i];
-		DBG_INFO("========== (%d/%d) VMA index: %d ==========\n",
-			 i, len, cur_vma.vma_index);
+		DBG_INFO("========== (%d/%d) VMA ID: %d ==========\n",
+			 i+1, len, cur_vma.vma_id);
 
 		for (j = 0; j < cur_vma.page_count; ++j) {
 			struct profiled_vma_page cur_page = cur_vma.pages[j];
@@ -442,9 +442,9 @@ void print_params(struct profile_params * params)
 	DBG_INFO("#VMAS: \t%d\n", len);
 	for (i = 0; i < len; ++i) {
 		struct vma_descr cur_vma = params->vmas[i];
-		DBG_INFO("========== (%d/%d) VMA index: %d ==========\n",
-			 i, len, cur_vma.vma_index);
-		DBG_INFO("Index     :\t%d\n", cur_vma.vma_index);
+		DBG_INFO("========== (%d/%d) VMA ID: %d ==========\n",
+			 i, len, cur_vma.vma_id);
+		DBG_INFO("ID        :\t%d\n", cur_vma.vma_id);
 		DBG_INFO("Tot. Pages:\t%d\n", (cur_vma.total_pages));
 		DBG_INFO("Op.  Pages:\t%d\n", cur_vma.page_count);
 		DBG_INFO("Operation :\t%d\n", cur_vma.operation);
