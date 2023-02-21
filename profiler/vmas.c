@@ -58,7 +58,7 @@ struct vma_descr * params_get_vma(struct profile_params * params,
 	struct vma_descr * out_vma = NULL;
 
 	for (i = 0; i < params->vma_count; ++i) {
-		if (params->vmas[i].vma_index == vma->vma_index) {
+		if (params->vmas[i].vma_id == vma->vma_id) {
 			out_vma = &params->vmas[i];
 			break;
 		}
@@ -67,7 +67,7 @@ struct vma_descr * params_get_vma(struct profile_params * params,
 	/* The VMA needs to be allocated? */
 	if (!out_vma) {
 		struct vma_descr tmp_vma;
-		tmp_vma.vma_index = vma->vma_index;
+		tmp_vma.vma_id = vma->vma_id;
 		tmp_vma.page_count = vma->page_count;
 		out_vma = add_vma_descr(&tmp_vma, &params->vmas, &params->vma_count);
 	}
@@ -85,7 +85,7 @@ struct vma_descr * params_get_vma_descr(struct profile_params * params,
 	struct vma_descr * out_vma = NULL;
 
 	for (i = 0; i < params->vma_count; ++i) {
-		if (params->vmas[i].vma_index == vma->vma_index) {
+		if (params->vmas[i].vma_id == vma->vma_id) {
 			out_vma = &params->vmas[i];
 			break;
 		}
@@ -123,7 +123,7 @@ void params_add_page(struct profile_params * params, struct profiled_vma * vma,
 }
 
 /* Add an entire VMA to the parameter passed to the kernel */
-void params_add_unprofiled_vma(struct profile_params * params, unsigned int vma_index)
+void params_add_unprofiled_vma(struct profile_params * params, unsigned int vma_id)
 {
 	/* Here we know for sure that out_vma points to a valid VMA to
 	 * which we will add the new page. */
@@ -132,7 +132,7 @@ void params_add_unprofiled_vma(struct profile_params * params, unsigned int vma_
 	 * we do not have any information about the size of this
 	 * VMA. */
 	struct vma_descr to_add = {
-		.vma_index = vma_index,
+		.vma_id = vma_id,
 		.total_pages = (unsigned int)(-1),
 		.page_count = 0,
 		.operation = __page_op,
@@ -144,7 +144,7 @@ void params_add_unprofiled_vma(struct profile_params * params, unsigned int vma_
 	/* This should never happen */
 	if (out_vma->page_index)
 		DBG_ABORT("Adding non-profiled VMA %d but non-empty list of "
-			  "pages exists in parameters.\n", vma_index);
+			  "pages exists in parameters.\n", vma_id);
 }
 
 struct vma_descr * add_vma_descr(struct vma_descr *vma, struct vma_descr ** vmas,
@@ -163,7 +163,7 @@ struct vma_descr * add_vma_descr(struct vma_descr *vma, struct vma_descr ** vmas
 	/* Find out where to insert the new VMA */
 	for (pos = 0; pos < (*vma_count) - 1; ++pos) {
 		struct vma_descr * cur_vma = &(*vmas)[pos];
-		if (cur_vma->vma_index > vma->vma_index)
+		if (cur_vma->vma_id > vma->vma_id)
 			break;
 	}
 
@@ -174,7 +174,7 @@ struct vma_descr * add_vma_descr(struct vma_descr *vma, struct vma_descr ** vmas
 	}
 
 	struct vma_descr * new_vma = &(*vmas)[pos];
-	new_vma->vma_index = vma->vma_index;
+	new_vma->vma_id = vma->vma_id;
 	new_vma->total_pages = vma->total_pages;
 
 	/* Reset all the other fields */
@@ -198,7 +198,7 @@ void add_vma(struct vma_struct *vma, struct vma_descr ** vmas,
 	}
 
 	struct vma_descr * new_vma = &(*vmas)[*vma_count-1];
-	new_vma->vma_index = vma->chunk_id;
+	new_vma->vma_id = vma->vma_id;
 	new_vma->total_pages = (vma->end - vma->start) >> PAGE_SHIFT;
 
 	/* Reset all the other fields */
@@ -295,15 +295,15 @@ static int vma_index_finder(struct vma_struct *vma, struct vma_descr ** vmas,
 
 static struct vma_struct * scan_proc_maps_line(int chunk_id, char const *buf)
 {
-	unsigned long start, end, offset, inode;
+	unsigned long start, end, offset, inode, id;
 	char *p, perms[5], dev[6], mappedfile[max_vma_mappedfile];
 	int rc;
 	struct vma_struct * vma;
 
 	/* FIXME This is horribly broken */
 	mappedfile[0] = '\0';
-	rc = sscanf(buf, "%lx-%lx %s %lx %s %lu " mapped_file_fmt ,
-		    &start, &end, perms, &offset, dev, &inode, mappedfile);
+	rc = sscanf(buf, "%lx-%lx %s %lx %s %lu (%lu) " mapped_file_fmt ,
+		    &start, &end, perms, &offset, dev, &inode, &id, mappedfile);
 
 	mappedfile[max_vma_mappedfile-1] = '\0';
 	if (rc < 6) {
@@ -316,6 +316,7 @@ static struct vma_struct * scan_proc_maps_line(int chunk_id, char const *buf)
 	}
 
 	vma->chunk_id = chunk_id;
+	vma->vma_id = id;
 	vma->start = start;
 	vma->end = end;
 	vma->len = end-start;
