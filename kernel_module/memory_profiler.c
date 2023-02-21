@@ -80,6 +80,10 @@
  ****************************************************************/
 /* Helper macro to prefix any print statement produced by the host *
  * process. */
+
+//extern int (*profile_decomposer) (int);
+
+
 #ifndef _SILENT_
 int verbose = 0;
 module_param(verbose, int, 0660);
@@ -160,6 +164,147 @@ struct activityInfo
 //for keeping reg property of memory device node in dtb
 //struct MemRange mem[4]; 
 struct MemRange *mem;
+
+/* struct profiled_vma_page{ */
+/*   int page_index; */
+/*   unsigned long min_cycles; */
+/*   unsigned long max_cycles; */
+/*   double avg_cycles; */
+/* }; */
+
+/* struct profiled_vma{ */
+/*   unsigned int vma_index; */
+/*   unsigned int page_count; */
+/*   struct profiled_vma_page *pages; */
+/* }; */
+
+//TODO
+/*This should ne in header file and included by this module and kernel src*/
+/* struct profile{ */
+/*   unsigned int profile_len; */
+/*   unsigned int num_samples;*/
+/*   unsigned int heap_pad */
+/*   struct profiled_vma* vmas; */
+/* }; */
+
+extern struct profile* (*profile_decomposer) (char* profile);
+
+/*int*/struct profile*  my_profile_decomposer(char* profile)
+{
+        struct mm_struct *mm;
+	struct vm_area_struct *vma;
+	struct file *file;
+	dev_t dev = 0;
+	vm_flags_t flags;
+	unsigned long ino = 0;
+	char* src_pos = profile;
+	int i;
+	unsigned long long pgoff = 0;
+	unsigned int vma_count, profile_len;
+	const char *name = NULL;
+	//unsigned int vma_count = *(unsigned int*)(src_pos);
+	//unsigned int* vma_count_ptr = kmalloc(sizeof(unsigned int));
+	struct profile *myprofile = kmalloc(sizeof(struct profile), GFP_KERNEL);
+	//TODO error checking for kmalloc
+	printk("we are inside the __profile_decomposer()\n");
+
+  
+	//Make sure we start with a clean struct profile
+	memset(myprofile, 0, sizeof(struct profile));
+
+	/*deserializing the profile information to profile struct*/
+	//memcpy(vma_count_ptr, src_pos ,sizeof(unsigned int)); 
+	//reading number of VMAs in this layout
+	memcpy((void *)&vma_count, src_pos,sizeof(unsigned int)); //(void* or &vma_count?
+	printk("test after the first memcpy\n");
+	src_pos += sizeof(unsigned int);
+	printk("number of VMAs in the layout of this process is:%d\n",vma_count);
+
+	//going forward as much as application layout
+	src_pos += vma_count*sizeof(struct vma_descr);
+
+	//reading the actual profile (header), reading all first three elements in one shot
+	memcpy((void*)&myprofile->profile_len, src_pos, 3*sizeof(unsigned int));
+	src_pos += 3*sizeof(unsigned int); // position now is at profiled_vma* 
+	profile_len = myprofile->profile_len; //I think # VMAs have been profiled
+	printk("profile_len is: %d\n",myprofile->profile_len);
+
+	myprofile->vmas = kmalloc(profile_len*sizeof(struct profiled_vma),GFP_KERNEL);
+	//TODO error checking for kmalloc
+
+	for (i = 0; i < profile_len; ++i) { //profile_len is number of profiled VMA
+		struct profiled_vma *vma = &myprofile->vmas[i];// putting address of field vmas[i] of myprofile which we kmalloced above
+		/*address of first element of myprofile->vmas (which is a vma that is included
+		  in the profile meaning that it has at least one imp page, is in vma in each round.
+		  in this memcpy we read from right src_pos in each i and put in right place
+		  we read both vma_index and page_count in one shot*/
+		memcpy((void *)&vma->vma_id, src_pos, 2*sizeof(unsigned int));
+		src_pos += 2*sizeof(unsigned int);
+		if (i == 0) //heap is 20
+		  vma->vma_id = 20;
+		if (i == 1) //stack is zero
+		  vma->vma_id = 0;
+		printk("VMA %d (idx: %d) has %d pages.\n", i, vma->vma_id, vma->page_count);
+
+		if (vma->page_count) {
+		       
+			ssize_t pg_size = vma->page_count*sizeof(struct profiled_vma_page);
+			vma->pages = (struct profiled_vma_page *)kmalloc(pg_size,GFP_KERNEL);
+			memcpy(vma->pages, src_pos, pg_size /*sizeof(struct profiled_vma_page)*/);
+			src_pos += pg_size /*sizeof(struct profiled_vma_page)*/;
+		}
+		else {
+			vma->pages = NULL;
+		}
+    
+	}
+
+	//printing layout of the application
+	mm = current->mm;
+	vma = mm->mmap;
+	file = vma->vm_file;
+	flags = vma->vm_flags;
+	printk("\nThis mm_struct has %d vmas.\n", mm->map_count);
+	//for (vma = mm->mmap ; vma ; vma = vma->vm_next){
+	if (file) {
+                struct inode *inode = file_inode(vma->vm_file);
+		dev = inode->i_sb->s_dev;
+                ino = inode->i_ino;
+                pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+        }
+
+	if (vma->vm_ops && vma->vm_ops->name) {
+		name = vma->vm_ops->name(vma);
+		printk("name is %s\n",name);
+		//goto done;
+	}
+	//name = arch_vma_name(vma);
+	/* if (!name) { */
+        /*         if (!mm) { */
+        /*                 name = "[vdso]"; */
+        /*                 //goto done; */
+        /*         } */
+
+        /*         if (vma->vm_start <= mm->brk && */
+        /*             vma->vm_end >= mm->start_brk) { */
+        /*                 name = "[heap]"; */
+        /*                 //goto done; */
+        /*         } */
+//	}
+
+
+	//}
+
+//done:
+	
+	
+  
+
+	return myprofile;
+
+  
+}
+
 
 unsigned int get_usecs(void)
 {
@@ -346,6 +491,9 @@ static void activity_stress(void* myinfo)
 
 	spin_unlock(&my_lock[smp_processor_id()]);
 
+	printk("first lock in STRESS :%d",!!spin_is_locked(&my_lock[smp_processor_id()]));
+
+
 	/*allocating buffer*/
 	my_info.buffer_size = 1*1024*1024; //should we get this from outside?
 	printk("STRESS: before buffer_allocation()\n");
@@ -363,6 +511,9 @@ static void activity_stress(void* myinfo)
 	}
 	
 	spin_unlock(&my_lock[smp_processor_id()]);
+
+	printk("second lock in STRESS :%d",!!spin_is_locked(&my_lock[smp_processor_id()]));
+
 
 	/*freeing the buffer*/
 	gen_pool_free(mem_pool[2], (unsigned long)(my_info.buffer_va),my_info.buffer_size);
@@ -393,6 +544,8 @@ static void activity_idle(void* myinfo)
 
 	spin_unlock(&my_lock[smp_processor_id()]);
 
+	printk("first lock in IDLE :%d",!!spin_is_locked(&my_lock[smp_processor_id()]));
+
 	/*main activity-busy loop*/
 	while (mywait)
 	{
@@ -400,6 +553,8 @@ static void activity_idle(void* myinfo)
 	}
 	//printk("mywait after while is %d\n",mywait);
 	spin_unlock(&my_lock[smp_processor_id()]);
+
+	printk("second lock in IDLE :%d",!!spin_is_locked(&my_lock[smp_processor_id()]));
 
 	put_cpu();
 	local_irq_restore(flags);
@@ -430,25 +585,27 @@ static void activity_idle(void* myinfo)
 	for (i = 0; i < 4; i++)
 	{
 		spin_lock_init(&my_lock[i]);
-		//spin_lock(&my_lock[i]);
+		spin_lock(&my_lock[i]);
 		//if locked, return value is 1
 		printk("lock is :%d",spin_is_locked(&my_lock[i]));
 	
 	}
 
-	local_irq_save(flags);
+
 	local_core = get_cpu();
 	printk("local_core is: %d\n",local_core);
 
 	/*main activity loop*/
-	for (j = 1; j < 4; j++)
+	for (j = 0; j < 4; j++)
 	{
 		/*reset masks at the begining of each iteration*/
 		cpumask_clear(&mymask1);
 		cpumask_clear(&mymask2);
+		myinfo.g_nread = 0;
+
 
 		//j = 3;
-		printk("mywait before mywait = 1 in the j = %d loop is %d\n",j,mywait);
+		printk(" j = %d\n",j);
 		mywait = 1;
 		counter1 = 0;
 		counter2 = 0;
@@ -504,10 +661,10 @@ static void activity_idle(void* myinfo)
 		{
 			if (z == local_core) continue; // we don want to spin on lock corresponds to local core
 			spin_lock(&my_lock[z]);
-			printk("lock is:%d",spin_is_locked(&my_lock[z]));
+			printk("BEFORE MEASURMENT:lock[%d] is:%d\n",z,spin_is_locked(&my_lock[z]));
 		    
 		}
-
+		local_irq_save(flags);
 		/*beginning of time mesurment*/
 		g_start = get_usecs();
 
@@ -519,7 +676,7 @@ static void activity_idle(void* myinfo)
 		    
 
 		g_end = get_usecs();
-
+		local_irq_restore(flags);
 		/*ending remote activities*/
 		mywait = 0;
 
@@ -530,13 +687,23 @@ static void activity_idle(void* myinfo)
 		}
 
 		msleep(100);
+
+		dur = g_end - g_start;
+//	printk("elapsed time is: %ld cycles\n", (end-start));
+		printk("elapsed = (%d usec)\n", dur);
+
+		//bandwidth calculation
+		printk("g_nread(bytes read) = %lld\n", (uint64_t)(myinfo.g_nread));
+		bandwidth = myinfo.g_nread / dur;
+		printk("B/W = %ld MB/s", bandwidth);
+
 	       
 	} //j loop
 
 
 	put_cpu();
 
-	local_irq_restore(flags);
+
 
 	//
 	/* printk("g_nread is :%lld\n",myinfo.g_nread); */
@@ -572,15 +739,7 @@ static void activity_idle(void* myinfo)
 
 	/* put_cpu(); */
 
-	dur = g_end - g_start;
-//	printk("elapsed time is: %ld cycles\n", (end-start));
-	printk("elapsed = (%d usec)\n", dur);
-
-	//bandwidth calculation
-	printk("g_nread(bytes read) = %lld\n", (uint64_t)(myinfo.g_nread));
-	bandwidth = myinfo.g_nread / dur;
-	printk("B/W = %ld MB/s", bandwidth);
-
+	
 	/*freeing the buffer*/
 	gen_pool_free(mem_pool[2], (unsigned long)(myinfo.buffer_va), myinfo.buffer_size);
 }
@@ -608,6 +767,9 @@ static int mm_exp_load(void){
 
 	bandwidth_measurment(); /*benchmarking the bandwidth*/
 
+	//Install handlers (callback function)
+	profile_decomposer = my_profile_decomposer;
+
 	pr_info("KPROFILER module installed successfully.\n");
 
 	return 0;
@@ -634,6 +796,9 @@ static void mm_exp_unload(void)
 	{
 		memunmap((void *)__pool_kva_lo[i]);
 	}
+
+	//free the handler
+	profile_decomposer = NULL;
 
 	pr_info("KPROFILER module uninstalled successfully.\n");
 }
