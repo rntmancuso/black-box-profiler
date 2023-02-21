@@ -30,7 +30,7 @@ struct profile_params
 struct vma_descr
 {
 	/* Index of VMA in post-init application layout */
-	unsigned int vma_index;
+	unsigned int vma_id;
 	/* Number of pages in a specific VMA */
 	unsigned int total_pages;
 	/* Number of pages to perform operations on */
@@ -50,7 +50,7 @@ struct profiled_vma_page {
 
 /*structure for keeping output of profiling mode-not relatedd to kernel*/
 struct profiled_vma {
-	unsigned int vma_index;
+	unsigned int vma_id;
 	unsigned int page_count;
 	struct profiled_vma_page * pages;
 };
