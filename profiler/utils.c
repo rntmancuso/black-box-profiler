@@ -1167,3 +1167,82 @@ void sort_profile_by_idx(struct profile * profile) {
 		      sizeof(struct profiled_vma_page), profiled_vma_page_idx_cmp);
 	}
 }
+
+void edit_vma_ID(struct profile * profile)
+{
+	unsigned int vma_id;
+	int i;
+	struct profiled_vma * vma = NULL;
+
+	/* Retrieve from user the ID of the VMA to edit */
+	DBG_INFO("ID of VMA to edit>> ");
+	fscanf(stdin, "%d", &vma_id);
+
+	/* Find the VMA to edit inside the profile */
+	for (i = 0; i < profile->profile_len; ++i) {
+		struct profiled_vma * cur_vma = &profile->vmas[i];
+		if (cur_vma->vma_id == vma_id) {
+			vma = cur_vma;
+			break;
+		}
+	}
+
+	if (!vma) {
+		DBG_INFO("VMA with ID %d not in the profile.\n", vma_id);
+		return;
+	}
+	
+	/* Request the new ID */
+	DBG_INFO("New ID>> ");
+	fscanf(stdin, "%d", &vma_id);
+
+	/* Set the new ID */
+	vma->vma_id = vma_id;
+
+	DBG_INFO("Correctly set ID %d for selected VMA.\n", vma_id);
+}
+
+#define INTERACTIVE_EDIT_USAGE \
+	"Profile EDIT Shell Commands: \n" \
+	"h or H\t\tPrint this help message.\n" \
+	"e\t\tExit EDIT shell.\n" \
+	"s\t\tPrint profile sorted by statistics.\n" \
+	"i\t\tPrint profile sorted by page indices.\n" \
+	"I\t\tEdit VMA IDs.\n"
+
+/* Interactive shell to edit profile files */
+void interactive_edit_profile(struct profile * profile)
+{
+	char cmd;
+	DBG_INFO("== Entering Interactive Profile EDIT Shell. Hello. ==\n");
+	
+	do {
+		DBG_INFO("CMD>> ");
+		fscanf(stdin, "%c", &cmd);
+
+		switch (cmd) {
+		case 'I': /* Change VMA ID */
+			edit_vma_ID(profile);
+			break;
+		case 'e': /* Exit */
+			break;
+		case 's': /* Print profile ordered by stats */
+			sort_profile_by_stats(profile);
+			print_profile(profile);
+			break;
+		case 'i': /* Print profile ordered by page index */
+			sort_profile_by_idx(profile);
+			print_profile(profile);
+			break;
+		case '\n':
+			break;
+		case 'h': /* Help message / usage */
+		case 'H':
+		default:
+			DBG_INFO(INTERACTIVE_EDIT_USAGE);
+		}
+	} while (cmd != 'e');
+
+	DBG_INFO("== Exitig Interactive Profile EDIT Shell. Goodbye. ==\n");
+	
+}
