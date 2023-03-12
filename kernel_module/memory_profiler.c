@@ -52,6 +52,13 @@
 #include <linux/delay.h> /*for msleeo() using as test*/
 #include <linux/cpumask.h>
 
+
+#ifdef __arm__
+#include <asm/cacheflush.h> /*for processor L1 cache flushing*/
+#include <asm/outercache.h>
+#include <asm/hardware/cache-l2x0.h>
+#endif
+
 /* #include <linux/timex.h> //using get_cycles */
 /* #include <asm/barrier.h> //getting counter */
 /* #include <asm/hwcap.h> */
@@ -122,12 +129,16 @@ int mem_no = 0; //for now, but I think is better to pass it rather than having a
 
 #define NUMA_NODE_THIS    -1
 
+#define THRESHOLD 62000000
+
 #define CACHE_LINE  64
 //#define BUFFER_SIZE 16*1024*1024            /*size of buffer we read from/write to for benchmarking*/
 #define MY_TYPE int                        /*type of data in allocated buffer which we read/write*/
 volatile unsigned int g_start;		   /* starting time */
 volatile unsigned int g_end;               /* ending time */
 volatile int mywait = 1;                               //global var to tell activities on other core to start/stop
+
+extern void __clean_inval_dcache_area(void * kaddr, size_t size);
 
 /* Handle for remapped memory */
 unsigned long  __pool_kva_lo[4];
@@ -146,6 +157,9 @@ static spinlock_t my_lock[4]; // one lock per core
 struct gen_pool ** mem_pool;
 //struct gen_pool * mem_pool[4];
 
+/* This is just a hack: keep track of the (single) allocated page so *
+ * that we can deallocate it upon module cleanup */
+static unsigned int __in_pool = 0;
 
 struct MemRange
 {
@@ -187,21 +201,56 @@ struct MemRange *mem;
 /*   struct profiled_vma* vmas; */
 /* }; */
 
+extern struct page * (*alloc_pvtpool_page) (struct page *, unsigned long);
+extern int (*free_pvtpool_page) (struct page *);
 extern struct profile* (*profile_decomposer) (char* profile);
+
+
+
+
+static inline void prefetch_page(void * page_va) {
+	int i;
+        for (i = 0; i < PAGE_SIZE; i += 64) {
+                prefetch(page_va + i);
+        }
+}
+
+
+
+static bool __addr_in_gen_pool(struct gen_pool *pool, unsigned long start,
+                        size_t size)
+{
+ 	bool found = false;
+        unsigned long end = start + size - 1;
+	struct gen_pool_chunk *chunk;
+
+	rcu_read_lock();
+        list_for_each_entry_rcu(chunk, &(pool)->chunks, next_chunk) {
+                if (start >= chunk->start_addr && start <= chunk->end_addr) {
+                        if (end <= chunk->end_addr) {
+				found = true;
+                                break;
+                        }
+                }
+	}
+        rcu_read_unlock();
+        return found;
+}
+
 
 /*int*/struct profile*  my_profile_decomposer(char* profile)
 {
-        struct mm_struct *mm;
-	struct vm_area_struct *vma;
-	struct file *file;
-	dev_t dev = 0;
-	vm_flags_t flags;
-	unsigned long ino = 0;
+  // struct mm_struct *mm;
+  //struct vm_area_struct *vma;
+	//	struct file *file;
+	//dev_t dev = 0;
+	//vm_flags_t flags;
+	//unsigned long ino = 0;
 	char* src_pos = profile;
 	int i;
-	unsigned long long pgoff = 0;
+	//unsigned long long pgoff = 0;
 	unsigned int vma_count, profile_len;
-	const char *name = NULL;
+	//const char *name = NULL;
 	//unsigned int vma_count = *(unsigned int*)(src_pos);
 	//unsigned int* vma_count_ptr = kmalloc(sizeof(unsigned int));
 	struct profile *myprofile = kmalloc(sizeof(struct profile), GFP_KERNEL);
@@ -240,10 +289,10 @@ extern struct profile* (*profile_decomposer) (char* profile);
 		  we read both vma_index and page_count in one shot*/
 		memcpy((void *)&vma->vma_id, src_pos, 2*sizeof(unsigned int));
 		src_pos += 2*sizeof(unsigned int);
-		if (i == 0) //heap is 20
-		  vma->vma_id = 20;
-		if (i == 1) //stack is zero
-		  vma->vma_id = 0;
+		/* if (i == 0) //heap is 20 */
+		/*   vma->vma_id = 20; */
+		/* if (i == 1) //stack is zero */
+		/*   vma->vma_id = 0; */
 		printk("VMA %d (idx: %d) has %d pages.\n", i, vma->vma_id, vma->page_count);
 
 		if (vma->page_count) {
@@ -259,46 +308,7 @@ extern struct profile* (*profile_decomposer) (char* profile);
     
 	}
 
-	//printing layout of the application
-	mm = current->mm;
-	vma = mm->mmap;
-	file = vma->vm_file;
-	flags = vma->vm_flags;
-	printk("\nThis mm_struct has %d vmas.\n", mm->map_count);
-	//for (vma = mm->mmap ; vma ; vma = vma->vm_next){
-	if (file) {
-                struct inode *inode = file_inode(vma->vm_file);
-		dev = inode->i_sb->s_dev;
-                ino = inode->i_ino;
-                pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
-        }
 
-	if (vma->vm_ops && vma->vm_ops->name) {
-		name = vma->vm_ops->name(vma);
-		printk("name is %s\n",name);
-		//goto done;
-	}
-	//name = arch_vma_name(vma);
-	/* if (!name) { */
-        /*         if (!mm) { */
-        /*                 name = "[vdso]"; */
-        /*                 //goto done; */
-        /*         } */
-
-        /*         if (vma->vm_start <= mm->brk && */
-        /*             vma->vm_end >= mm->start_brk) { */
-        /*                 name = "[heap]"; */
-        /*                 //goto done; */
-        /*         } */
-//	}
-
-
-	//}
-
-//done:
-	
-	
-  
 
 	return myprofile;
 
@@ -743,7 +753,237 @@ static void activity_idle(void* myinfo)
 	/*freeing the buffer*/
 	gen_pool_free(mem_pool[2], (unsigned long)(myinfo.buffer_va), myinfo.buffer_size);
 }
+
+
+/* static int cacheability_mod (pte_t *ptep, unsigned long addr,void *data) */
+/* { */
+
+/*         pte_t *pte = ptep; */
+/*         size_t pfn; */
+/*         pte_t newpte; */
+/*         struct page *page = NULL; */
+/*         void *page_v; */
+
+/* //making new pte */
+/* 	pfn = pte_pfn(*pte); //with the old pte                                                                                */
+/* 	page = pte_page(*pte); */
+/* 	page_v = kmap(page); */
 	
+/*        	newpte = pfn_pte(pfn, pgprot_writecombine(((struct Data*)data)->vmas->vm_page_prot)); */
+                                                                                 
+/* 	__clean_inval_dcache_area(page_v, PAGE_SIZE); */
+		 
+/* 	kunmap(page_v); */
+
+/* 	/\*DBG_PRINT("CM: 0x%llx --> 0x%llx (VA: 0x%lx; PFN = 0x%lx)\n",                                                        */
+/* 	  (long long)pte_val(*pte),                                                                                           */
+/* 	  (long long)pte_val(newpte), addr, pfn);*\/ */
+
+/* 	set_pte_at(current->mm, addr, pte, newpte);// each process has only one mm */
+/* 	flush_tlb_page(((struct Data*)data)->vmas, addr); */
+
+/* 	return 0; */
+/* } */
+
+/* this is for each page, it is applied to the length of just one page
+   length = page_size*/
+/* void __cacheability_modifier(unsigned long int user_vaddr, struct vm_area_struct *vma/\*,pte_t *pte*\/) */
+/* { */
+/* 	//struct Data data;// is not array, does not need kmalloc */
+/* 	struct Data *data = kmalloc (sizeof(struct Data), GFP_KERNEL); */
+/* 	data->vmas = vma; */
+/* 	data->vaddr = user_vaddr; */
+  
+/* 	apply_to_page_range(data->vmas->vm_mm, data->vaddr,PAGE_SIZE,cacheability_mod, data); */
+ 
+/* } */
+void *pool_alloc(int pool_id, struct page *page, unsigned long private, struct vm_area_struct *vma)
+{
+	void *page_va;
+	printk("beginning of the allocation in the pool_alloc\n");
+
+	if (!mem_pool[pool_id])
+		return NULL;
+	
+	if (private == PVTPOOL_ALLOC_NOREPLACE) {
+		void * old_page_va = page_va = page_to_virt(page);
+		if(__addr_in_gen_pool(mem_pool[pool_id], (unsigned long)old_page_va, PAGE_SIZE)) {
+			return page;
+		}
+	} else if (private == IS_PVTPOOL_PARAMS) {
+		//params = (struct pvtpool_params *)page;
+		if ((/*params->*/vma->vm_flags & VM_ALLOC_PVT_CORE) == 0)
+			return NULL;
+	}
+	
+	page_va = (void *)gen_pool_alloc(mem_pool[pool_id], PAGE_SIZE);
+
+        printk("POOL: Allocating VA: 0x%08lx\n", (unsigned long)page_va);
+
+	if (!page_va) {
+		pr_err("Unable to allocate page from colored pool.\n");
+		return NULL;
+	}
+
+	if (verbose)
+		dump_page(virt_to_page(page_va), "pool alloc debug");
+
+	++__in_pool;
+
+	///printk("POOL: [ALLOC] Current allocation: %d pages\n", __in_pool);
+
+	return page_va ;
+}
+
+struct page * alloc_pool_page(struct page * page, unsigned long private)
+{
+ 	void * page_va;
+	int i, j;
+	struct pvtpool_params * params;
+	struct profile *myprofile = kmalloc(sizeof(struct profile), GFP_KERNEL);
+
+	printk("in allocation func of kernel module!\n");
+	
+	if (!current || !current->mm || !current->mm->prof_info /*|| !mem_pool[current->mm->prof_info->cpu_id]*/)
+                return NULL;//returning NULL means default alloc of the kernel
+	
+	params = (struct pvtpool_params *)page; //now we have access to vma and addr
+
+	myprofile = current->mm->prof_info;
+
+	printk("vma id is: %d\n", params->vma->vma_id);
+
+	for (i = 0; i < myprofile->profile_len; i++) //for # of VMAs we have in our profile
+	{
+		struct profiled_vma *curr_vma = &myprofile->vmas[i];
+		
+		printk("curr_vma->vma_id is : %d and difference is: %ld\n",
+		       curr_vma->vma_id, (params->vma->vm_end - params->vma->vm_start)/PAGE_SIZE);
+		
+		if (params->vma->vma_id == curr_vma->vma_id) //just for the VMA we mean
+		{
+			for (j = 0; j < curr_vma->page_count; j++) //check for each page of VMA
+			{
+
+				//printk("IDs eq: params->vaddr: %x\n", params->vaddr);
+				struct profiled_vma_page *curr_page = &curr_vma->pages[j];
+
+				unsigned long int curr_addr = params->vma->vm_start +
+					curr_page->page_index*PAGE_SIZE;
+
+				if(curr_addr == params->vaddr)//if the page belongs to profile
+				{
+					printk("When addresses are equal\n");
+                                        //allocate from the pool if the threshold;
+					//if (curr_page->avg_cycles > N)
+					if(curr_page->max_cycles > THRESHOLD)
+					//allocate from this pool (all code below?)
+					{
+						page_va = pool_alloc(1, page, private, params->vma); //should be OCM
+					}
+					else
+					{
+						page_va = pool_alloc (2, page, private, params->vma); //should be DRAM
+					}
+
+					break;//break from which for
+					
+				}
+				else //if addr is not found
+					return NULL;
+			}
+			
+			break;
+		}
+	}
+	
+	kfree(myprofile);
+	//check if this address of VMA belongs to profiler
+	//params.vaddr
+	//params = (struct pvtpool_params *)page;
+	//now we have params.vaddr
+	//we should check if this params.vaddr ==
+	//first make addrr from index (start + myprofile->vmas[i]->pageindex*pagesize)
+	//check if these two addresses are equal
+	//if not return NULL so it goes to default alloc path
+	//if yes, check the threshold for cycles
+ 	
+ 	/* printk("beginning of the allocation in the kernel module\n"); */
+	/* if (private == PVTPOOL_ALLOC_NOREPLACE) { */
+	/* 	void * old_page_va = page_va = page_to_virt(page); */
+	/* 	if(__addr_in_gen_pool(mem_pool[2/\*current->mm->prof_info->cpu_id*\/], (unsigned long)old_page_va, PAGE_SIZE)) { */
+	/* 		return page; */
+	/* 	} */
+	/* } else if (private == IS_PVTPOOL_PARAMS) { */
+	/* 	params = (struct pvtpool_params *)page; */
+	/* 	if ((params->vma->vm_flags & VM_ALLOC_PVT_CORE) == 0) */
+	/* 		return NULL; */
+	/* } */
+	
+	/* page_va = (void *)gen_pool_alloc(mem_pool[2 /\*current->mm->prof_info->cpu_id*\/], PAGE_SIZE); */
+
+        /* printk("POOL: Allocating VA: 0x%08lx\n", (unsigned long)page_va); */
+
+	/* if (!page_va) { */
+	/* 	//pr_err("Unable to allocate page from colored pool.\n"); */
+	/* 	return NULL; */
+	/* } */
+
+	/* if (verbose) */
+	/* 	dump_page(virt_to_page(page_va), "pool alloc debug"); */
+
+	/* ++__in_pool; */
+
+	/* ///printk("POOL: [ALLOC] Current allocation: %d pages\n", __in_pool); */
+	
+	prefetch_page(page_va);
+
+	return virt_to_page(page_va);
+
+}
+	
+
+
+int __my_free_pvtpool_page (struct page * page)
+{
+ 	void * page_va;
+	int i;
+	
+	if(!current)
+	{
+		printk("current is NULL!\n");
+		return 1;
+	}
+
+	for (i = 0; i < mem_no; i++){
+		if (!mem_pool[i] || !page){
+			printk("one of mem_pool or/and page are NULL :|\n");
+			return 1;
+		}
+       
+		page_va = page_to_virt(page);
+       
+		if(__addr_in_gen_pool(mem_pool[i], (unsigned long)page_va, PAGE_SIZE)) {
+			printk("Dynamic de-allocation for phys page 0x%08llx\n",
+			       page_to_phys(page));
+
+			set_page_count(page, 1);
+			if (verbose)
+				dump_page(page, "pool dealloc debug");
+
+			gen_pool_free(mem_pool[i], (unsigned long)page_va, PAGE_SIZE);
+
+			--__in_pool;
+
+			///		printk("POOL: [FREE] Current allocation: %d pages\n", __in_pool);
+
+			return 0;
+		}
+	}
+
+        return 1;
+
+}
 
 
 static int mm_exp_load(void){
@@ -764,10 +1004,14 @@ static int mm_exp_load(void){
         if (init == 0)
                 printk("init is %d\n",init);
         printk("after mem_pool initialization\n");
-
+    
 	bandwidth_measurment(); /*benchmarking the bandwidth*/
 
 	//Install handlers (callback function)
+	/* Install handler for pages released by the kernel at task completion 
+	   and for changing page-level cacheability*/
+	free_pvtpool_page = __my_free_pvtpool_page;
+        alloc_pvtpool_page = alloc_pool_page;
 	profile_decomposer = my_profile_decomposer;
 
 	pr_info("KPROFILER module installed successfully.\n");
@@ -797,7 +1041,9 @@ static void mm_exp_unload(void)
 		memunmap((void *)__pool_kva_lo[i]);
 	}
 
-	//free the handler
+	//release the handler
+	free_pvtpool_page = NULL;
+	alloc_pvtpool_page = NULL;
 	profile_decomposer = NULL;
 
 	pr_info("KPROFILER module uninstalled successfully.\n");
