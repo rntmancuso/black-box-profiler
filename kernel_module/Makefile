@@ -1,8 +1,10 @@
-obj-m += memory_profiler.o
+obj-m += memory_profiler.o aarch64_kmod.o
 mem_profiler-objs = memory_profiler.o 
+aarch64_kmod-objs = aarch64_kprofiler.o cache_ops.o
 
 export CROSS_COMPILE:=aarch64-linux-gnu-
 export ARCH:=arm64
+
 KVERSION = $(shell uname -r)
 BLDDIR= /home/golsana/linux-xlnx-prof
 
