@@ -114,5 +114,7 @@ void setup_signals(void);
  * https://gist.github.com/amullins83/24b5ef48657c08c4005a8fab837b7499 */
 void print_progress(const char * prefix, size_t count, size_t max);
 
+/* Interactive shell to edit profile files */
+void interactive_edit_profile(struct profile * profile);
 
 #endif
