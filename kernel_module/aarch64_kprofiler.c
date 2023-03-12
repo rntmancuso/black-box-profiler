@@ -915,6 +915,7 @@ static void test_page_structs(void)
 static int mm_exp_load(void){
 
         int ret = -1;
+	printk("in mm_exp_load\n");
 
 #ifdef __arm__
 	/*PL310 L2 cache for using those clean,invalidate funcs*/
@@ -945,7 +946,7 @@ static int mm_exp_load(void){
 
 
 	/* Now try to remap memory at a known physical address. For both LO and HI range */
-        DBG_PRINT("Remapping PRIVATE_LO reserved memory area\n");
+        printk("Remapping PRIVATE_LO reserved memory area\n");
 
         /* Setup pagemap structure to guide memremap_pages operation */
 	if (use_lopool) {
@@ -973,6 +974,8 @@ static int mm_exp_load(void){
 		ret = 0;
 	}
 
+	printk("before the first gen_pool\n");
+
 	/* Instantiate an allocation pool using the genpool subsystem */
         mem_pool = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
 
@@ -993,6 +996,7 @@ static int mm_exp_load(void){
         free_pvtpool_page = __my_free_pvtpool_page;
 	alloc_pvtpool_page = alloc_pool_page;
 
+	printk("after handlers\n");
 	/* Run a quick sanity check on the existance of page structs
 	 * for pool area */
 	if(verbose)
@@ -1035,6 +1039,7 @@ static void mm_exp_unload(void)
 	/* Release handler of page deallocations */
         free_pvtpool_page = NULL;
 	alloc_pvtpool_page = NULL;
+	
 
         remove_proc_entry(PROF_PROCFS_NAME, NULL);
 
