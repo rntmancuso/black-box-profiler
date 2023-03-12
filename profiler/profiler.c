@@ -47,6 +47,7 @@ int __print_layout = 0;
 int __print_profile = 0;
 int __migrate_pages = -1;
 int __non_realtime = 0;
+int __edit_profile = 0;
 unsigned long __scan_flags = 0;
 enum page_operation __page_op = PAGE_CACHEABLE;
 char * __save_to = NULL;
@@ -318,10 +319,63 @@ void do_migration(struct trace_params * tparams, struct profile * profile,
 	clear_disk_cache();
 }
 
+void prepare_for_profiling(int argc, char * argv [], int optind,
+			   struct trace_params * tparams)
+{
+	int i, tracee_cmd_idx;
+	
+	/* Check that the symbol to observe has been specified */
+	if (!tparams->symbol) {
+		DBG_ABORT("No symbol/function to observe has been"
+			  " specified with the -s parameter. Exiting.\n");
+	}
+
+	/* Check that there is a non-empty command to launch the
+	 * tracee after the optional parameters */
+	if (optind >= argc) {
+	  	DBG_ABORT("Expected command to run after parameters. Exiting.\n");
+	}
+
+	/* Keep track that the command line for the tracee starts at
+	 * position optind in the list of arguments. */
+	tracee_cmd_idx = optind;
+	tparams->exe_name = argv[tracee_cmd_idx];
+	tparams->exe_params = &argv[tracee_cmd_idx];
+
+	/* Print out the reminder of the command, i.e. what to
+	 * execute and its paramters */
+	DBG_INFO("Command to execute: [");
+	for (i = tracee_cmd_idx; i < argc; ++i)
+		DBG_INFO_NOPREF("%s ", argv[i]);
+	DBG_INFO_NOPREF("\b]\n");
+
+
+	/* We are ready to start the tracee. But let's try to resolve
+	 * the symbol to observe right away. If we can't resolve the
+	 * target symbol, there is no point in running the tracee. */
+	tparams->brkpnt_addr[TRACEE_ENTRY] = resolve_symbol(tparams->exe_name,
+							    tparams->symbol);
+
+	/* If the breakpoint was correctly installed, the address
+	 * saved as the tracee's entry point will be a valid
+	 * one. There is nothing to do if this fails. */
+	if (tparams->brkpnt_addr[TRACEE_ENTRY] == (void *)-1) {
+		DBG_ABORT("Unable to resolve breakpoint symbol and install breakpoint. Exiting.\n");
+	}
+
+	/* Pass run flags, if any. */
+	tparams->run_flags = __run_flags;
+
+	/* We are ready to launch the process to be profiled to learn
+	 * about its layout and identify the VMAs we will work
+	 * with. But before we do the first launch, setup the signal
+	 * handling for the parent. */
+	setup_signals();	
+}
 
 int main(int argc, char* argv[])
 {
-	int opt, i, tracee_cmd_idx, __addl_sample_count = 1;
+	int opt, __addl_sample_count = 1;
 	struct trace_params tparams;
 	struct vma_descr * vma_targets;
 	unsigned int vma_count;
@@ -340,7 +394,7 @@ int main(int argc, char* argv[])
 	 * end of the command line after all the optional
 	 * arguments. */
 
-	while(!cmd_found && (opt = getopt(argc, argv, "-:s:g:n:m:hvpqto:i:rlf:N")) != -1) {
+	while(!cmd_found && (opt = getopt(argc, argv, "-:s:g:n:m:hvpqto:i:rlf:NE")) != -1) {
 		switch (opt) {
 		case 'h':
 			DBG_INFO(HELP_STRING, argv[0]);
@@ -408,6 +462,9 @@ int main(int argc, char* argv[])
 		case 'N':
 			__non_realtime = 1;
 			break;
+		case 'E':
+			__edit_profile = 1;
+			break;
 		case 1:
 			cmd_found = 1;
 			optind--;
@@ -418,53 +475,15 @@ int main(int argc, char* argv[])
 		}
 	}
 
-	/* Check that the symbol to observe has been specified */
-	if (!tparams.symbol) {
-		DBG_ABORT("No symbol/function to observe has been"
-			  " specified with the -s parameter. Exiting.\n");
+	/* The profiler needs to be bootstrapped, so initialize
+	 * everything we need. */
+	if (__addl_sample_count > 0 || /* If new samples are requested */
+	    __do_ranking || /* If ranking needs to be performed */
+	    __migrate_pages >= 0 || /* If page migration is requested */
+	    !__load_from) /* If no profile file will be loaded (auto layout detection) */
+	{
+		prepare_for_profiling(argc, argv, optind, &tparams);
 	}
-
-	/* Check that there is a non-empty command to launch the
-	 * tracee after the optional parameters */
-	if (optind >= argc) {
-	  	DBG_ABORT("Expected command to run after parameters. Exiting.\n");
-	}
-
-	/* Keep track that the command line for the tracee starts at
-	 * position optind in the list of arguments. */
-	tracee_cmd_idx = optind;
-	tparams.exe_name = argv[tracee_cmd_idx];
-	tparams.exe_params = &argv[tracee_cmd_idx];
-
-	/* Print out the reminder of the command, i.e. what to
-	 * execute and its paramters */
-	DBG_INFO("Command to execute: [");
-	for (i = tracee_cmd_idx; i < argc; ++i)
-		DBG_INFO_NOPREF("%s ", argv[i]);
-	DBG_INFO_NOPREF("\b]\n");
-
-
-	/* We are ready to start the tracee. But let's try to resolve
-	 * the symbol to observe right away. If we can't resolve the
-	 * target symbol, there is no point in running the tracee. */
-	tparams.brkpnt_addr[TRACEE_ENTRY] = resolve_symbol(tparams.exe_name,
-							   tparams.symbol);
-
-	/* If the breakpoint was correctly installed, the address
-	 * saved as the tracee's entry point will be a valid
-	 * one. There is nothing to do if this fails. */
-	if (tparams.brkpnt_addr[TRACEE_ENTRY] == (void *)-1) {
-		return EXIT_FAILURE;
-	}
-
-	/* Pass run flags, if any. */
-	tparams.run_flags = __run_flags;
-
-	/* We are ready to launch the process to be profiled to learn
-	 * about its layout and identify the VMAs we will work
-	 * with. But before we do the first launch, setup the signal
-	 * handling for the parent. */
-	setup_signals();
 
 	if (!__non_realtime) {
 		/* We are ready for some profiling. Pin the parent to a CPU
@@ -481,6 +500,10 @@ int main(int argc, char* argv[])
 		 * flags as needed. */
 		tparams.vm_peak = profile.heap_pad;
 		tparams.run_flags |= RUN_SET_MALLOC;
+
+		if (__edit_profile) {
+			interactive_edit_profile(&profile);
+		}
 	} else {
 		/* Make sure we start with a clean profile */
 		memset(&profile, 0, sizeof(struct profile));
@@ -504,7 +527,7 @@ int main(int argc, char* argv[])
 
 	/* Do we need to save the profile to file? */
 	if (__save_to) {
-		if (!__addl_sample_count)
+		if (!__addl_sample_count && !__edit_profile)
 			DBG_ABORT("No new samples to save. Not overwriting with an empty profile.\n");
 
 		save_profile(__save_to, vma_targets, vma_count, &profile);
