@@ -505,7 +505,7 @@ static int cacheability_modifier (pte_t *ptep, unsigned long addr,void *data)
         struct vm_area_struct * vma = ((struct Data*)data)->vmas;
 
         //DBG_PRINT("skip: %d,page_number:%d\n",skip,cp.vmas[((struct Data*)data)->count_vma].page_count);
-
+	printk("operation is:%d\n",skip);
         /*check whether current addr is in the list of pages which we want to skip the operation for*/
         for (i=0; i< cp.vmas[((struct Data*)data)->count_vma].page_count; i++)
 	{
@@ -719,17 +719,19 @@ void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *ta
 	/* for walking on list of vmas of the process sent by user */
 	int process_vma = 0;
 	data->mm = mm;
-	data->vmas = mm->mmap;
+	//data->vmas = mm->mmap;
+	//struct vm_area_struct *vma = data->vmas;
 
 	DBG_PRINT("VMA count: %d\n", cp.vma_count);
 	/*for walking on vma arrays (cp.vmas) sent by user*/
 	for (i = 0; i < cp.vma_count ; i++)
 	{
                 data->count_vma = i;
-		for (; process_vma < mm->map_count; process_vma++)
+		//for (; process_vma < mm->map_count; process_vma++)
+		for (data->vmas = mm->mmap; data->vmas; data->vmas = data->vmas->vm_next )
 		{
 			//DBG_PRINT("user's VMA is: %d\n",cp.vmas[i].vma_index);
-		  if (cp.vmas[i].vma_id == process_vma)//I changed index to id 
+		  if (cp.vmas[i].vma_id == data->vmas->vma_id/*process_vma*/)//I changed index to id 
 			{
 				/*checking the consistency*/
 				if (cp.vmas[i].total_pages == (unsigned int)(-1)) {
@@ -764,7 +766,7 @@ void vma_finder (struct mm_struct *mm, struct Data *data, struct task_struct *ta
 						kfree(data->page_addr);
 
 					data->vmas = data->vmas->vm_next;
-					process_vma++;
+					//process_vma++;
 					break;
 				} else {
 					pr_err("KPROFILER: VM size mismatch!");
