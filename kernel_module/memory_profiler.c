@@ -59,11 +59,6 @@
 #include <asm/hardware/cache-l2x0.h>
 #endif
 
-/* #include <linux/timex.h> //using get_cycles */
-/* #include <asm/barrier.h> //getting counter */
-/* #include <asm/hwcap.h> */
-/* #include <asm/sysreg.h> */
-
 
 #if LINUX_VERSION_CODE > KERNEL_VERSION(4, 13, 0)
 #  include <linux/sched/types.h>
@@ -73,14 +68,6 @@
 #  include <linux/sched/rt.h>
 #endif
 #include <linux/sched.h>
-
-/* At insert time, decide if we are gonna use both pools or disable
- * them selectively */
-/* int use_lopool = 1; */
-/* module_param(use_lopool, int, 0660); */
-
-/* int use_hipool = 1; */
-/* module_param(use_hipool, int, 0660); */
 
 /*****************************************************************
  *
@@ -120,16 +107,11 @@ OCM
 DRAM
 ***************/
 
-
-//unsigned long MEM_START[4]; //array for keeping the start address of each memory pool
-//unsigned long MEM_SIZE[4];  //size of each memory pool
-//TODO? enum for each memory (index for each mem to be used inabove arrays
-
 int mem_no = 0; //for now, but I think is better to pass it rather than having as general
 
 #define NUMA_NODE_THIS    -1
 
-#define THRESHOLD 62000000
+#define THRESHOLD /*19630000*/112927923
 
 #define CACHE_LINE  64
 //#define BUFFER_SIZE 16*1024*1024            /*size of buffer we read from/write to for benchmarking*/
@@ -144,15 +126,6 @@ extern void __clean_inval_dcache_area(void * kaddr, size_t size);
 unsigned long  __pool_kva_lo[4];
 //static void * __pool_kva_lo = NULL
 
-/*Initializing spinlocks statically*/
-//DEFINE_SPINLOCK(my_lock);
-/* static spinlock_t my_lock[3] = { */
-/* 	__SPIN_LOCK_UNLOCKED(my_lock_0), */
-/* 	__SPIN_LOCK_UNLOCKED(my_lock_1), */
-/* 	__SPIN_LOCK_UNLOCKED(my_lock_2), */
-/* }; */
-/*defining spinlocks this way for dynamic initialization*/
-static spinlock_t my_lock[4]; // one lock per core
 
 struct gen_pool ** mem_pool;
 //struct gen_pool * mem_pool[4];
@@ -167,39 +140,10 @@ struct MemRange
 	unsigned long size;
 };
 
-struct activityInfo
-{
-	volatile uint64_t g_nread; /* number of bytes read */  
-	int* buffer_va; /*kvirt addr of beginning of the buffer*/
-	unsigned long int buffer_size;
-  
-};
 
 //for keeping reg property of memory device node in dtb
 //struct MemRange mem[4]; 
 struct MemRange *mem;
-
-/* struct profiled_vma_page{ */
-/*   int page_index; */
-/*   unsigned long min_cycles; */
-/*   unsigned long max_cycles; */
-/*   double avg_cycles; */
-/* }; */
-
-/* struct profiled_vma{ */
-/*   unsigned int vma_index; */
-/*   unsigned int page_count; */
-/*   struct profiled_vma_page *pages; */
-/* }; */
-
-//TODO
-/*This should ne in header file and included by this module and kernel src*/
-/* struct profile{ */
-/*   unsigned int profile_len; */
-/*   unsigned int num_samples;*/
-/*   unsigned int heap_pad */
-/*   struct profiled_vma* vmas; */
-/* }; */
 
 extern struct page * (*alloc_pvtpool_page) (struct page *, unsigned long);
 extern int (*free_pvtpool_page) (struct page *);
@@ -255,7 +199,7 @@ static bool __addr_in_gen_pool(struct gen_pool *pool, unsigned long start,
 	//unsigned int* vma_count_ptr = kmalloc(sizeof(unsigned int));
 	struct profile *myprofile = kmalloc(sizeof(struct profile), GFP_KERNEL);
 	//TODO error checking for kmalloc
-	printk("we are inside the __profile_decomposer()\n");
+	//printk("we are inside the __profile_decomposer()\n");
 
   
 	//Make sure we start with a clean struct profile
@@ -265,9 +209,9 @@ static bool __addr_in_gen_pool(struct gen_pool *pool, unsigned long start,
 	//memcpy(vma_count_ptr, src_pos ,sizeof(unsigned int)); 
 	//reading number of VMAs in this layout
 	memcpy((void *)&vma_count, src_pos,sizeof(unsigned int)); //(void* or &vma_count?
-	printk("test after the first memcpy\n");
+	//printk("test after the first memcpy\n");
 	src_pos += sizeof(unsigned int);
-	printk("number of VMAs in the layout of this process is:%d\n",vma_count);
+	//printk("number of VMAs in the layout of this process is:%d\n",vma_count);
 
 	//going forward as much as application layout
 	src_pos += vma_count*sizeof(struct vma_descr);
@@ -276,8 +220,9 @@ static bool __addr_in_gen_pool(struct gen_pool *pool, unsigned long start,
 	memcpy((void*)&myprofile->profile_len, src_pos, 3*sizeof(unsigned int));
 	src_pos += 3*sizeof(unsigned int); // position now is at profiled_vma* 
 	profile_len = myprofile->profile_len; //I think # VMAs have been profiled
-	printk("profile_len is: %d\n",myprofile->profile_len);
+	//printk("profile_len is: %d\n",myprofile->profile_len);
 
+	//should we kmalloc this?
 	myprofile->vmas = kmalloc(profile_len*sizeof(struct profiled_vma),GFP_KERNEL);
 	//TODO error checking for kmalloc
 
@@ -293,7 +238,7 @@ static bool __addr_in_gen_pool(struct gen_pool *pool, unsigned long start,
 		/*   vma->vma_id = 20; */
 		/* if (i == 1) //stack is zero */
 		/*   vma->vma_id = 0; */
-		printk("VMA %d (idx: %d) has %d pages.\n", i, vma->vma_id, vma->page_count);
+		//	printk("VMA %d (idx: %d) has %d pages.\n", i, vma->vma_id, vma->page_count);
 
 		if (vma->page_count) {
 		       
@@ -316,15 +261,6 @@ static bool __addr_in_gen_pool(struct gen_pool *pool, unsigned long start,
 }
 
 
-unsigned int get_usecs(void)
-{
-	//ktime_t time;
-	struct timeval time; //inclduing sec and ns or us?
-	time = ktime_to_timeval(ktime_get_real());
-	return (time.tv_sec * 1000000 + time.tv_usec);
-  
-}
-
 ///*static int*/ void pool_range(void)// why static int? //designing error handling path
 void pool_range(void){
   
@@ -333,7 +269,7 @@ void pool_range(void){
 	u64 regs[2];//regs[0] = start and regs[1] = size 
 	int rc,i,j;
 	
-	printk("inside pool_range()\n");
+	//printk("inside pool_range()\n");
 
         /*scanning nodes in the first round for realizing the number of nodes with compatible = genpool*/
 	node_count = NULL;
@@ -366,7 +302,7 @@ void pool_range(void){
 			printk("didn't catch the regs<mem_start> correctly\n");
 		}
 	}
-        printk("mem[0].start : %llx, mem[0].size = %llx \n",regs[0], regs[1]);
+        //printk("mem[0].start : %llx, mem[0].size = %llx \n",regs[0], regs[1]);
         mem[0].start = regs[0];
         mem[0].size = regs[1];
 
@@ -375,7 +311,7 @@ void pool_range(void){
 		mem_type[i] = of_find_compatible_node(mem_type[i-1],"memory","genpool");
 
 		if (!mem_type[i]){
-			printk("END of memory nodes\n");
+		  //printk("END of memory nodes\n");
 			break;
 		}
 
@@ -390,7 +326,7 @@ void pool_range(void){
 			}
 		} 
 
-		printk("mem[%d].start: %llx and mem[%d].size: %llx\n",i,regs[0],i,regs[1]);
+		//	printk("mem[%d].start: %llx and mem[%d].size: %llx\n",i,regs[0],i,regs[1]);
 		
 		mem[i].start = regs[0];
 		mem[i].size = regs[1];
@@ -402,7 +338,7 @@ void pool_range(void){
 static int initializer(int* ret)
 {
 	int i;
-	printk("mem_ni is : %d\n",mem_no);
+	//printk("mem_no is : %d\n",mem_no);
 	for (i = 0; i < mem_no; i++)
         {
                 ret[i] = -1;
@@ -414,7 +350,7 @@ static int initializer(int* ret)
                 mem_pool[i] = kmalloc(sizeof(struct gen_pool),GFP_KERNEL);
         }
 
-	printk("Remapping reserved memory area\n");
+	//printk("Remapping reserved memory area\n");
 
 	for (i = 0; i < mem_no; i++)
         {
@@ -452,307 +388,6 @@ unmap:
 
 
 
-int64_t bench_read(struct activityInfo* myinfo)
-{
-	int i;
-	int64_t sum = 0;
-	//int count = 0;
-	for ( i = 0; i < myinfo->buffer_size/sizeof(MY_TYPE); i+=(CACHE_LINE/sizeof(MY_TYPE)) ) {
-		sum += myinfo->buffer_va[i];
-		//count++;
-	}
-	myinfo->g_nread += myinfo->buffer_size;// here g_nread is addr, we received as addr 
-	//printk("number of iteration in the memory buffer is: %d\n", count);
-	return sum;
-}
-
-int buffer_allocation(struct activityInfo* myinfo) 
-{ 
-	int i;
-
-	/*allocating buffer, buffer_va is the beginning addr*/
-        myinfo->buffer_va = (int *) gen_pool_alloc(mem_pool[2], myinfo->buffer_size);
-        printk("VA of beginning of the buffer: 0x%08lx\n",(unsigned long)(myinfo->buffer_va));
-
-        if (!(myinfo->buffer_va)) {
-                printk("unable to allocate buffer.\n");
-		return 1;
-        }
-
-        for ( i = 0; i < myinfo->buffer_size/sizeof(MY_TYPE); i++)
-        {
-                myinfo->buffer_va[i] = i;
-        }
-
-	return 0;
-} 
-
-
-static void activity_stress(void* myinfo)
-{
-	struct activityInfo my_info;
-	unsigned long flags;
-	int i, retval;
-	int64_t sum;
-
-	local_irq_save(flags);
-	get_cpu();
-	printk("we are on cpu: %d\n",smp_processor_id());
-
-	spin_unlock(&my_lock[smp_processor_id()]);
-
-	printk("first lock in STRESS :%d",!!spin_is_locked(&my_lock[smp_processor_id()]));
-
-
-	/*allocating buffer*/
-	my_info.buffer_size = 1*1024*1024; //should we get this from outside?
-	printk("STRESS: before buffer_allocation()\n");
-
-	retval = buffer_allocation(&my_info);
-	if (retval != 0) {
-		printk("buffer_allocation() failed.\n");
-		//return;
-	}
-	/*main activity*/
-	while(mywait)
-	{		
-		for ( i = 0; i < my_info.buffer_size/sizeof(MY_TYPE); i+=(CACHE_LINE/sizeof(MY_TYPE)) ) {
-			sum += my_info.buffer_va[i];                                                                               	}
-	}
-	
-	spin_unlock(&my_lock[smp_processor_id()]);
-
-	printk("second lock in STRESS :%d",!!spin_is_locked(&my_lock[smp_processor_id()]));
-
-
-	/*freeing the buffer*/
-	gen_pool_free(mem_pool[2], (unsigned long)(my_info.buffer_va),my_info.buffer_size);
-        put_cpu();
-	local_irq_restore(flags);
-
-}
-
-static void activity_idle(void* myinfo)
-{
-	/* int count = 1000; */
-	/* printk("mywait is %d\n",mywait); */
-	/* while (1) */
-	/* { */
-	/* 	if (mywait != 0) */
-	/* 	{ */
-	/* 		count--; */
-	/* 		if (count < 0) */
-	/* 			break; */
-	/* 	} */
-	/* } */
-	/* printk("mywait is %d\n",mywait); */
-	unsigned long flags;
-	
-	local_irq_save(flags);
-	get_cpu();
-        printk("IDLE: mywait before while is %d\n",mywait);
-
-	spin_unlock(&my_lock[smp_processor_id()]);
-
-	printk("first lock in IDLE :%d",!!spin_is_locked(&my_lock[smp_processor_id()]));
-
-	/*main activity-busy loop*/
-	while (mywait)
-	{
-		//break;
-	}
-	//printk("mywait after while is %d\n",mywait);
-	spin_unlock(&my_lock[smp_processor_id()]);
-
-	printk("second lock in IDLE :%d",!!spin_is_locked(&my_lock[smp_processor_id()]));
-
-	put_cpu();
-	local_irq_restore(flags);
-
-}
-
-/*static int*/void  bandwidth_measurment(void)
-{
-	//cycles_t start,end;
-	unsigned long flags; // for interrupt state
-	unsigned int dur, c;
-	long int bandwidth, i;
-	int retval, j, k, z, local_core, counter1, counter2;
-	struct cpumask mymask1, mymask2;
-	int64_t sum_read = 0;
-	struct activityInfo myinfo;
-
-	myinfo.g_nread = 0;
-        myinfo.buffer_size = 16*1024*1024; ///should I get this from user?
-
-	/*allocating buffer for benchmarking*/
-	retval = buffer_allocation(&myinfo);
-	if (retval != 0) {
-		printk("buffer_allocation() failed.\n");
-	}
-
-	//Initializing locks
-	for (i = 0; i < 4; i++)
-	{
-		spin_lock_init(&my_lock[i]);
-		spin_lock(&my_lock[i]);
-		//if locked, return value is 1
-		printk("lock is :%d",spin_is_locked(&my_lock[i]));
-	
-	}
-
-
-	local_core = get_cpu();
-	printk("local_core is: %d\n",local_core);
-
-	/*main activity loop*/
-	for (j = 0; j < 4; j++)
-	{
-		/*reset masks at the begining of each iteration*/
-		cpumask_clear(&mymask1);
-		cpumask_clear(&mymask2);
-		myinfo.g_nread = 0;
-
-
-		//j = 3;
-		printk(" j = %d\n",j);
-		mywait = 1;
-		counter1 = 0;
-		counter2 = 0;
-		printk("local core is(inside for): %d\n",local_core);
-		/*c is # of cores which run the activity*/
-		for ( c = 0; c < 4; c++) 
-		{
-	
-			if (c == local_core)
-				continue;
-
-			if (counter1 < j) //when we want just one core runs f1
-			{
-				//f1_mask.set(c);
-				cpumask_set_cpu(c,&mymask1);
-				counter1++;
-			}
-			else if (counter2 < (4-j))
-			{
-				cpumask_set_cpu(c,&mymask2);
-				counter2++;
-			}
-		
-		
-		}
-
-		/*for testing mymask*/
-		for (k = 0; k < 4; k++)
-		{
-			if(cpumask_test_cpu(k,&mymask1))
-				printk("mymask1 %d is set\n", k);
-			//if(cpumask_test_cpu(k,&mymask2))
-			//printk("mymask2 %d is set\n", k);
-
-		}
-
-		for (k = 0; k < 4; k++)
-		{
-			if(cpumask_test_cpu(k,&mymask2))
-				printk("mymask2 %d is set\n", k);
-			//if(cpumask_test_cpu(k,&mymask2))
-			//printk("mymask2 %d is set\n", k);
-
-		}
-
-		/*starting remote activities*/
-		on_each_cpu_mask(&mymask1,activity_idle,NULL,false);
-	        on_each_cpu_mask(&mymask2,activity_stress,NULL,false);
-
-		/*This way for all locks corresponding to all remote cores we are trying
-		  to grab the lock. spin_lock spins and tries to acquire the lock*/
-		for (z = 0; z < 4; z++)
-		{
-			if (z == local_core) continue; // we don want to spin on lock corresponds to local core
-			spin_lock(&my_lock[z]);
-			printk("BEFORE MEASURMENT:lock[%d] is:%d\n",z,spin_is_locked(&my_lock[z]));
-		    
-		}
-		local_irq_save(flags);
-		/*beginning of time mesurment*/
-		g_start = get_usecs();
-
-		//Benchmarking: accessing the memory
-		for (i = 0; i < 100; i++)
-		{
-			sum_read += bench_read(&myinfo);// pass as pointer to keep changes
-		}
-		    
-
-		g_end = get_usecs();
-		local_irq_restore(flags);
-		/*ending remote activities*/
-		mywait = 0;
-
-		for (z = 0; z < 4; z++)
-		{
-			if (z == local_core) continue; // we don want to spin on lock corresponds to local core
-			spin_lock(&my_lock[z]);
-		}
-
-		msleep(100);
-
-		dur = g_end - g_start;
-//	printk("elapsed time is: %ld cycles\n", (end-start));
-		printk("elapsed = (%d usec)\n", dur);
-
-		//bandwidth calculation
-		printk("g_nread(bytes read) = %lld\n", (uint64_t)(myinfo.g_nread));
-		bandwidth = myinfo.g_nread / dur;
-		printk("B/W = %ld MB/s", bandwidth);
-
-	       
-	} //j loop
-
-
-	put_cpu();
-
-
-
-	//
-	/* printk("g_nread is :%lld\n",myinfo.g_nread); */
-	/* smp_call_function_single(0, test_other_cpu,NULL,false); */
-	/* g_start = get_usecs(); */
-	
-	/* retval = smp_call_function_single(1, test_local_cpu,&myinfo,true); */
-	/* if (retval != 0) */
-	/*   { */
-	/*     printk("error!!!\n");//what are right questions to ask to design error handling paths? */
-	/*   } */
-
-	/* g_end = get_usecs(); */
-	
-
-	/* /\*benchmarking operation*\/ */
-	/* this_cpu = get_cpu(); */
-	/* printk("cpu ID is = %d\n",this_cpu); */
-	/* //start = get_cycles(); */
-	/* g_start = get_usecs(); */
-	
-	/* //accessing the memory */
-	/* for (i = 0; i < 1000; i++) */
-	/* { */
-	/* sum_read += bench_read(buffer_va, &g_nread);// pass as pointer to keep changes */
-	/* } */
-
-	/* //msleep(10); /\*for test*\/ */
-
-	/* //end = get_cycles(); */
-	/* g_end = get_usecs(); */
-	
-
-	/* put_cpu(); */
-
-	
-	/*freeing the buffer*/
-	gen_pool_free(mem_pool[2], (unsigned long)(myinfo.buffer_va), myinfo.buffer_size);
-}
 
 
 /* static int cacheability_mod (pte_t *ptep, unsigned long addr,void *data) */
@@ -797,10 +432,11 @@ static void activity_idle(void* myinfo)
 /* 	apply_to_page_range(data->vmas->vm_mm, data->vaddr,PAGE_SIZE,cacheability_mod, data); */
  
 /* } */
+
 void *pool_alloc(int pool_id, struct page *page, unsigned long private, struct vm_area_struct *vma)
 {
 	void *page_va;
-	printk("beginning of the allocation in the pool_alloc\n");
+	//printk("beginning of the allocation in the pool_alloc\n");
 
 	if (!mem_pool[pool_id])
 		return NULL;
@@ -818,12 +454,14 @@ void *pool_alloc(int pool_id, struct page *page, unsigned long private, struct v
 	
 	page_va = (void *)gen_pool_alloc(mem_pool[pool_id], PAGE_SIZE);
 
-        printk("POOL: Allocating VA: 0x%08lx\n", (unsigned long)page_va);
+        //printk("POOL: Allocating VA: 0x%08lx\n", (unsigned long)page_va);
 
 	if (!page_va) {
 		pr_err("Unable to allocate page from colored pool.\n");
 		return NULL;
 	}
+
+        set_page_count(virt_to_page(page_va), 1);
 
 	if (verbose)
 		dump_page(virt_to_page(page_va), "pool alloc debug");
@@ -842,7 +480,7 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 	struct pvtpool_params * params;
 	struct profile *myprofile = kmalloc(sizeof(struct profile), GFP_KERNEL);
 
-	printk("in allocation func of kernel module!\n");
+	//printk("in allocation func of kernel module!\n");
 	
 	if (!current || !current->mm || !current->mm->prof_info /*|| !mem_pool[current->mm->prof_info->cpu_id]*/)
                 return NULL;//returning NULL means default alloc of the kernel
@@ -851,14 +489,14 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 
 	myprofile = current->mm->prof_info;
 
-	printk("vma id is: %d\n", params->vma->vma_id);
+	//printk("vma id is: %d\n", params->vma->vma_id);
 
 	for (i = 0; i < myprofile->profile_len; i++) //for # of VMAs we have in our profile
 	{
 		struct profiled_vma *curr_vma = &myprofile->vmas[i];
 		
-		printk("curr_vma->vma_id is : %d and difference is: %ld\n",
-		       curr_vma->vma_id, (params->vma->vm_end - params->vma->vm_start)/PAGE_SIZE);
+		//printk("curr_vma->vma_id is : %d and difference is: %ld\n",
+		//curr_vma->vma_id, (params->vma->vm_end - params->vma->vm_start)/PAGE_SIZE);
 		
 		if (params->vma->vma_id == curr_vma->vma_id) //just for the VMA we mean
 		{
@@ -870,27 +508,28 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 
 				unsigned long int curr_addr = params->vma->vm_start +
 					curr_page->page_index*PAGE_SIZE;
-
+				
+				//printk("curr_addr : %lx and params->vaddr : %lx\n", curr_addr, params->vaddr);
 				if(curr_addr == params->vaddr)//if the page belongs to profile
 				{
-					printk("When addresses are equal\n");
+				  //printk("When addresses are equal\n");
                                         //allocate from the pool if the threshold;
 					//if (curr_page->avg_cycles > N)
-					if(curr_page->max_cycles > THRESHOLD)
+					if(curr_page->max_cycles < THRESHOLD)
 					//allocate from this pool (all code below?)
 					{
-						page_va = pool_alloc(1, page, private, params->vma); //should be OCM
+						page_va = pool_alloc(3, page, private, params->vma); //should be OCM
 					}
 					else
 					{
-						page_va = pool_alloc (2, page, private, params->vma); //should be DRAM
+						page_va = pool_alloc (3, page, private, params->vma); //should be DRAM
 					}
 
 					break;//break from which for
 					
 				}
-				else //if addr is not found
-					return NULL;
+				//else //if addr is not found
+				//	return NULL;
 			}
 			
 			break;
@@ -964,10 +603,10 @@ int __my_free_pvtpool_page (struct page * page)
 		page_va = page_to_virt(page);
        
 		if(__addr_in_gen_pool(mem_pool[i], (unsigned long)page_va, PAGE_SIZE)) {
-			printk("Dynamic de-allocation for phys page 0x%08llx\n",
-			       page_to_phys(page));
+		  //printk("Dynamic de-allocation for phys page 0x%08llx\n",
+		  //	       page_to_phys(page));
 
-			set_page_count(page, 1);
+		
 			if (verbose)
 				dump_page(page, "pool dealloc debug");
 
@@ -991,7 +630,7 @@ static int mm_exp_load(void){
 	int init;
 	int* ret;
 	
-	printk(KERN_INFO "Online CPUs: %d, Present CPUs: %d\n", num_online_cpus(),num_present_cpus());
+	//printk(KERN_INFO "Online CPUs: %d, Present CPUs: %d\n", num_online_cpus(),num_present_cpus());
 	
 	pool_range(); //reading start and size from dtb for making memory pools
 	//printk("outside the pool_range() and mem_no is:%d\n",mem_no);
@@ -1002,10 +641,8 @@ static int mm_exp_load(void){
 	/*initialization of memory pools*/
 	init = initializer(ret);
         if (init == 0)
-                printk("init is %d\n",init);
-        printk("after mem_pool initialization\n");
-    
-	bandwidth_measurment(); /*benchmarking the bandwidth*/
+	  // printk("init is %d\n",init);
+        //printk("after mem_pool initialization\n");
 
 	//Install handlers (callback function)
 	/* Install handler for pages released by the kernel at task completion 
@@ -1014,7 +651,7 @@ static int mm_exp_load(void){
         alloc_pvtpool_page = alloc_pool_page;
 	profile_decomposer = my_profile_decomposer;
 
-	pr_info("KPROFILER module installed successfully.\n");
+	//pr_info("KPROFILER module installed successfully.\n");
 
 	return 0;
 
@@ -1031,7 +668,8 @@ static void mm_exp_unload(void)
 	
 		if (mem_pool[i]){
 	                gen_pool_destroy(mem_pool[i]);
-			printk("destroying happened successfully\n");}
+			//printk("destroying happened successfully\n");
+		}
 	}
         
 
@@ -1046,7 +684,7 @@ static void mm_exp_unload(void)
 	alloc_pvtpool_page = NULL;
 	profile_decomposer = NULL;
 
-	pr_info("KPROFILER module uninstalled successfully.\n");
+	//pr_info("KPROFILER module uninstalled successfully.\n");
 }
 
 module_init(mm_exp_load);
