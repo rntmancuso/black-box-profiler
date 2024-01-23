@@ -38,17 +38,6 @@
 #include <linux/cpumask.h>
 #include <linux/random.h>
 
-#define PREFIX                "[MemFiler] "
-#define ACTIVITY_BANDWIDTH    (1)
-#define ACTIVITY_LATENCY      (2)
-#define DEFAULT_ITER          (100) /* Nr. of iterations for the benchmark */ 
-#define DEFAULT_BUFFER_SIZE   (1*1024*1024) /* Deafult buffers size */ 
-#define NUMA_NODE_THIS        -1
-#define CACHE_LINE            64
-#define MY_TYPE               int  /* type of data in allocated buffer
-				    * which we read/write for BW
-				    * benchmarking*/
-
 #if LINUX_VERSION_CODE > KERNEL_VERSION(4, 13, 0)
 #  include <linux/sched/types.h>
 #endif
@@ -58,52 +47,12 @@
 #endif
 #include <linux/sched.h>
 
+#include "memory_benchmarking.h"
 
-/* 
-   Helper macro to prefix any print statement produced by the host
-   process.
-*/
-
-#ifndef _SILENT_
+/* START - Kernel Module Parameter Definition */
 int verbose = 0;
 module_param(verbose, int, 0660);
 
-#define DBG_PRINT(format, ...)                                          \
-        do {                                                            \
-		if (verbose)						\
-                        pr_info("[KPROF] " format, ##__VA_ARGS__);	\
-        } while (0)
-#else
-#define DBG_PRINT(format, ...)			\
-        {}
-#endif
-
-#define DBG_INFO(format, ...)					\
-        do {							\
-		pr_info("[KPROF] " format, ##__VA_ARGS__);	\
-        } while (0)
-
-/* START - Kernel Module Structure Definition */
-struct mem_pool {
-	struct gen_pool * alloc_pool;
-	unsigned long pool_kva; /* start kernel virtual addr of memory pool */
-	unsigned long phys_start;  /* start physical addr of memory pool */
-	unsigned long size;  /* size of memory pool */	
-	unsigned char ready;
-};
-
-struct activity_info
-{
-        volatile uint64_t g_nread; /* number of bytes read for BW benchmarking */
-	int* buffer_va; /*kvirt addr of beginning of the buffer for BW benchmarking*/
-        long int* lat_buff_va;/*same as buffer_va but for latency benchmark*/
-        unsigned long int buffer_size; /*size of buffer we are allocating*/
-        int operation; /*latency or BW benchmarking?*/
-	struct gen_pool * alloc_pool;
-};
-/* END - Kernel Module Structure Definition */
-
-/* START - Kernel Module Parameter Definition */
 static long param_buffer_size = DEFAULT_BUFFER_SIZE;
 module_param(param_buffer_size, long, S_IRUGO);
 
@@ -128,13 +77,12 @@ unsigned int g_pools_count = 0;
 struct mem_pool *g_pools = NULL;
 /* END - Global variables */
 
-
 volatile unsigned int g_start;	  /* starting time */
 volatile unsigned int g_end;      /* ending time */
-volatile int mywait = 1;          /*global var to tell activities on other core to start/stop*/
+volatile int g_exp_running = 1;   /* global var to tell activities on other core to start/stop*/
 
 /*defining spinlocks this way for dynamic initialization*/
-static spinlock_t my_lock[4]; // one lock per core
+static spinlock_t cpu_lock[4]; // one lock per core
 
 /* Scan through the device tree to detect memory pools. Returns the
  * number of detected pools to callee. Returns -1 in case of error. */
@@ -197,10 +145,10 @@ int initialize_pools(void)
 	for (i = 0; i < g_pools_count; ++i)
         {
 		struct mem_pool * pool = &g_pools[i];
-		pool->pool_kva = (unsigned long) memremap(mem[i].start, mem[i].size, MEMREMAP_WB);
+		pool->pool_kva = (unsigned long) memremap(pool->phys_start, pool->size, MEMREMAP_WB);
 
                 if (pool->pool_kva == 0) {
-                        pr_err(PREFIX "Unable to remap memory region @ 0x%08lx. Exiting.\n",
+                        pr_err(PREFIX "Unable to remap memory region @ 0x%08llx. Exiting.\n",
 			       pool->phys_start);
                         goto error_unmap;
                 }
@@ -215,27 +163,28 @@ int initialize_pools(void)
 
                 if (pool->alloc_pool == NULL) {
 			pr_err(PREFIX "Unable to create genalloc memory pool.\n");
-                        goto unmap;
+                        goto error_unmap;
                 }
 		
                 res = gen_pool_add(pool->alloc_pool, (unsigned long)pool->pool_kva,
 				   pool->size, NUMA_NODE_THIS);
                 if (res != 0) {
 			pr_err(PREFIX "Unable to initialize genalloc memory pool.\n");
-                        goto unmap;
+                        goto error_unmap;
                 }
 
 		/* If everything goes well, mark this pool as ready. */
-		pool->read = 1;
+		pool->ready = 1;
         }
 
         return 0;
 
 error_unmap:
+	/* TODO actually unmap partially initialized pools before exiting */
 	return -1;	
 }
 
-uint64_t latency_read(struct activityInfo* myinfo)
+uint64_t latency_read(struct activity_info* myinfo)
 {
 	int i;
 	uint64_t readsum = 0;
@@ -251,12 +200,12 @@ uint64_t latency_read(struct activityInfo* myinfo)
 	
 }
 
-int64_t bandwidth_read(struct activityInfo* myinfo)
+int64_t bandwidth_read(struct activity_info* myinfo)
 {
 	int i;
 	int64_t readsum = 0;
     
-	for ( i = 0; i < myinfo->buffer_size/sizeof(MY_TYPE); i+=(CACHE_LINE/sizeof(MY_TYPE)) ) {
+	for ( i = 0; i < myinfo->buffer_size/sizeof(BUF_TYPE); i+=(CACHE_LINE/sizeof(BUF_TYPE)) ) {
 
 		readsum += myinfo->buffer_va[i];
 	 
@@ -267,29 +216,29 @@ int64_t bandwidth_read(struct activityInfo* myinfo)
 	return readsum;
 }
 
-int BW_buffer_allocation(struct activityInfo* myinfo) 
+int alloc_map_cache_buffer (struct activity_info * actInfo, int cpus) 
 { 
 	int i;
+	ssize_t total_size = actInfo->buffer_size * cpus;
      
-	/*allocating buffer, buffer_va is the beginning addr*/
-	myinfo->buffer_va = (int *) gen_pool_alloc(myinfo->alloc_pool, myinfo->buffer_size);
-	printk("VA of beginning of the buffer: 0x%08lx\n",(unsigned long)(myinfo->buffer_va));
+	/* allocating buffer, buffer_va is the beginning addr */
+	actInfo->buffer_va = (u64 *) gen_pool_alloc(actInfo->pool->alloc_pool, total_size);
 
-	if (!(myinfo->buffer_va)) {
-		printk("unable to allocate buffer for bandwidth.\n");
-		return 1;
+	if (!(actInfo->buffer_va)) {
+		return -1;
 	}
 
-	/*filling the buffer/array*/	
-	for ( i = 0; i < myinfo->buffer_size/sizeof(MY_TYPE); i++) //or buffer_size/cacheline??
+	/* Fill the buffer/array */	
+	for (i = 0; i < total_size/sizeof(BUF_TYPE); i++)
 	{
-		myinfo->buffer_va[i] = i;
+		actInfo->buffer_va[i] = i;
 	}
 
 	return 0;
 }
 
-int latency_buffer_allocation(struct activityInfo* myinfo)
+#if 0
+int latency_buffer_allocation(struct activity_info* myinfo)
 {
 	int i;
 	long int temp;
@@ -362,243 +311,415 @@ int latency_buffer_allocation(struct activityInfo* myinfo)
 	       
 	return 0;
 }
+#endif 
 
+/* These are the low-level functions that correspond to the various
+ * access types supported for benchmarking */
 
-static void activity_stress(void* myinfo)
+static inline void __access_bw_read (BUF_TYPE * r, BUF_TYPE * w)
 {
-	struct activityInfo my_info;
-	unsigned long flags;
-	int i, retval;
-	int64_t sum = 0;
-
-	local_irq_save(flags);
-	get_cpu();
-	printk("we are on cpu: %d\n",smp_processor_id());
-
-	spin_unlock(&my_lock[smp_processor_id()]);
-
-	printk("[STRESS] first lock in STRESS :%d",!!spin_is_locked(&my_lock[smp_processor_id()]));
-
-
-	/*allocating buffer*/
-	//size of buffer for remote stress activities
-	my_info.buffer_size = 1*1024*1024; //should we get this from outside?
-	my_info.alloc_pool = mem_pool[2];
-	printk("STRESS: before buffer_allocation()\n");
-
-        /*for all stress activities no matter BW or latency we do BW stressing*/
-	retval = BW_buffer_allocation(&my_info);
-	if (retval != 0) {
-		printk("BW_buffer_allocation() failed.\n");
-		//return;
-	}
+	BUF_TYPE tmp;
 	
-	/*main activity*/
-	while(mywait)
-	{		
-		for ( i = 0; i < my_info.buffer_size/sizeof(MY_TYPE);
-		      i+=(CACHE_LINE/sizeof(MY_TYPE)) )
-		{
-			my_info.buffer_va[i] = i;
-		}
-	}
+	(void)w;
 	
-	spin_unlock(&my_lock[smp_processor_id()]);
-
-	printk("[STRESS] second lock in STRESS :%d %lld",!!spin_is_locked(&my_lock[smp_processor_id()]),sum);
-
-
-	/*freeing the buffer*/
-	gen_pool_free(my_info.alloc_pool, (unsigned long)(my_info.buffer_va),my_info.buffer_size);
-        put_cpu();
-	local_irq_restore(flags);
-
+	__asm__ volatile(
+		"ldr %0, [%1]"  // Load from the address in r
+		: "=r" (tmp)    // Output operand: store the result in tmp
+		: "r" (r)       // Input operand: address to load from is in r
+		: "memory"
+		);
 }
 
-static void activity_idle(void* myinfo)
+static inline void __access_bw_write (BUF_TYPE * r, BUF_TYPE * w)
+{
+	BUF_TYPE tmp;
+	
+	(void)r;
+	
+	__asm__ volatile(
+		"str %1, [%0]"       // Store at the address in w
+		:                    // No output operands
+		: "r" (w), "r" (tmp) // Input operand: address to store at, and value to store
+		: "memory"
+		);
+}
+
+static inline void __access_bw_rw (BUF_TYPE * r, BUF_TYPE * w)
+{
+	BUF_TYPE tmp;
+		
+	__asm__ volatile(
+		"ldr %0, [%1]\n\t"     // Load from the address in r
+		"str %0, [%2]"       // Store into address in w
+		: "=r" (tmp)         // Output operand: store the result in tmp
+		: "r" (r), "r" (w)   // Input operand: address to load from is in r
+		: "memory"
+		);
+}
+
+#define ACCESS_BUFFER(var, start, end, incr, access_type)	\
+	do {							\
+		for (var = start; var < end; var += incr)	\
+			__access_##access_type(var, var);	\
+	} while (0)
+
+static void activity_stress(void * params)
+{
+	struct activity_info * actInfo = (struct activity_info * )params;
+	unsigned long flags;
+	BUF_TYPE * ptr;
+
+	local_irq_save(flags);
+	get_cpu();
+	spin_unlock(&cpu_lock[smp_processor_id()]);
+
+	/* TODO -- actually figure out which access type to use!! */
+	while(g_exp_running)
+	{
+		ACCESS_BUFFER(ptr, actInfo->buffer_va,
+			      actInfo->buffer_va + actInfo->buffer_size/sizeof(BUF_TYPE),
+			      CACHE_LINE/sizeof(BUF_TYPE),
+			      bw_rw);
+	}
+	
+	spin_unlock(&cpu_lock[smp_processor_id()]);
+
+        put_cpu();
+	local_irq_restore(flags);
+}
+
+static void activity_idle(void* params)
 {
 	unsigned long flags;
 	
 	local_irq_save(flags);
+	
 	get_cpu();
-        printk("IDLE: mywait before while is %d\n",mywait);
+	spin_unlock(&cpu_lock[smp_processor_id()]);
 
-	spin_unlock(&my_lock[smp_processor_id()]);
-
-	printk("[IDLE] first lock in IDLE :%d",!!spin_is_locked(&my_lock[smp_processor_id()]));
-
-	/*main activity-busy loop*/
-	while (mywait)
-	{
-		//break;
-	}
+	/* CPU-bound busy loop */
+	while (g_exp_running);
   
-	spin_unlock(&my_lock[smp_processor_id()]);
-
-	printk("[IDLE] second lock in IDLE :%d",!!spin_is_locked(&my_lock[smp_processor_id()]));
+	spin_unlock(&cpu_lock[smp_processor_id()]);
 
 	put_cpu();
 	local_irq_restore(flags);
-
 }
 
-/*static int*/void measurement(struct activityInfo * actInfo)
+int alloc_init_buffers (struct experiment_info * expInfo)
 {
-  
-	//cycles_t start,end;
-	unsigned long flags; // for interrupt state
-	unsigned int dur, c;
-	long int bandwidth, bandwidth_frac, i;
-	long int avglat; 
-	int retval, j, k, z, local_core, counter1, counter2;
-	struct cpumask mymask1, mymask2;
-	uint64_t sum_read = 0;
-	//int operation = 2; //for now latency
-	int repeat = DEFAULT_ITER;
-	
-	printk("actInfo.operation is %d\n",actInfo->operation);
 
-	/*allocation and initialization at the same time*/
-	if (actInfo->operation == ACTIVITY_BANDWIDTH) //BANDWIDTH
+	unsigned int cpus;
+
+	/* Retrieve the configuration for the activity to time on the
+	 * observed core */
+	struct activity_info * actInfo = &expInfo->obs_info;
+	struct activity_info * interf_actInfo = &expInfo->interf_info;
+
+	cpus = num_online_cpus();
+	
+	if (actInfo->buffer_va || interf_actInfo->buffer_va) {
+		pr_err(PREFIX "Experiment ABORTED -- non-zero buffer pointers before init.\n");
+		return -1;
+	}
+
+	if (actInfo->map_type == MAP_NCACHE || interf_actInfo->map_type == MAP_NCACHE) {
+		pr_err(PREFIX "Experiment ABORTED -- MAP_NCACHE not supported yet.\n");
+		return -1;		
+	}
+
+	/* Allocate cacheable buffer for core under analysis */
+	if (actInfo->map_type == MAP_CACHE) 
 	{
-		retval = BW_buffer_allocation(actInfo);//for remote cors I assume
-		if (retval != 0) {
-			printk("buffer_allocation() for BW failed.\n");
+		if (alloc_map_cache_buffer(actInfo, 1) < 0) {
+			pr_err(PREFIX "Experiment ABORTED -- "
+			       "unable to allocate cacheable buffer for observed core.\n");
+			return -1;			
 		}
 	}
 
-	if (actInfo->operation == ACTIVITY_LATENCY) //LATENCY
+	/* Allocate cacheable buffer for intefering cores analysis */
+	if (interf_actInfo->map_type == MAP_CACHE) 
 	{
-		retval = latency_buffer_allocation(actInfo);//for remote cors I assume
-		if (retval != 0) {
-			printk("buffer_allocation() for latency failed.\n");
+		if (alloc_map_cache_buffer(interf_actInfo, cpus - 1) < 0) {
+			pr_err(PREFIX "Experiment ABORTED -- "
+			       "unable to allocate cacheable buffer for interfering cores.\n");
+			return -1;			
 		}
+	}	
+	
+	if (actInfo->access_type == ACCESS_LATENCY || actInfo->access_type == ACCESS_LATENCY_NT)
+	{
+		pr_err(PREFIX "Experiment ABORTED -- ACCESS_LATENCY not supported yet.\n");
+		return -1;		
+	}
+		
+	return 0;		
+}
+
+void dealloc_buffers(struct experiment_info * expInfo)
+{
+	unsigned int cpus;
+
+	/* Deallocate any buffer related to this experiment */
+	/* Retrieve the configuration for the activity to time on the
+	 * observed core */
+	struct activity_info * actInfo = &expInfo->obs_info;
+	struct activity_info * interf_actInfo = &expInfo->interf_info;
+
+	cpus = num_online_cpus();
+		
+	if (actInfo->buffer_va) {
+		gen_pool_free(actInfo->pool->alloc_pool,
+			      (unsigned long)actInfo->buffer_va, actInfo->buffer_size);
+		actInfo->buffer_va = NULL;
+	}
+	
+	if (interf_actInfo->buffer_va) {
+		gen_pool_free(interf_actInfo->pool->alloc_pool,
+			      (unsigned long)interf_actInfo->buffer_va,
+			      (cpus -1) * interf_actInfo->buffer_size);
+		interf_actInfo->buffer_va = NULL;
+	}
+}
+
+int validate_experiment (struct experiment_info * expInfo)
+{
+	unsigned int cpus;
+
+	/* Retrieve the configuration for the activity to time on the
+	 * observed core */
+	struct activity_info * actInfo = &expInfo->obs_info;
+	struct activity_info * interf_actInfo = &expInfo->interf_info;
+
+	cpus = num_online_cpus();
+
+	/* Clean-up and initialize aux fields */
+	expInfo->bytes_count = 0;
+
+	/* Find the pointer to the genpool allocation pools */
+	if (actInfo->pool_id < 0 || actInfo->pool_id >= g_pools_count) {
+		pr_err(PREFIX "Experiment ABORTED -- invalid pool ID: %d\n",
+		       actInfo->pool_id);
+		return -1;
 	}
 
-	//Initializing locks
-	for (i = 0; i < 4; i++)
-	{
-		spin_lock_init(&my_lock[i]);
-		spin_lock(&my_lock[i]);
-		//if locked, return value is 1
-		printk("lock is :%d",spin_is_locked(&my_lock[i]));
-	
+	if (!g_pools[actInfo->pool_id].ready) {
+		pr_err(PREFIX "Experiment ABORTED -- selected non-ready pool ID: %d\n",
+		       actInfo->pool_id);
+		return -1;		
 	}
 
+	actInfo->pool = &g_pools[actInfo->pool_id];
 
-	local_core = get_cpu();
-	printk("local_core is: %d\n",local_core);
+	if (interf_actInfo->pool_id < 0 || interf_actInfo->pool_id >= g_pools_count) {
+		pr_err(PREFIX "Experiment ABORTED -- invalid pool ID: %d\n",
+		       actInfo->pool_id);
+		return -1;
+	}
 
-	/*main activity loop*/
-	for (j = 0; j < 4; j++)
-	{
-		/*reset masks at the begining of each iteration*/
-		cpumask_clear(&mymask1);
-		cpumask_clear(&mymask2);
-		actInfo->g_nread = 0;
+	if (!g_pools[interf_actInfo->pool_id].ready) {
+		pr_err(PREFIX "Experiment ABORTED -- selected non-ready pool ID: %d\n",
+		       actInfo->pool_id);
+		return -1;		
+	}
 
+	interf_actInfo->pool = &g_pools[interf_actInfo->pool_id];
 
-		//j = 3;
-		printk(" j = %d\n",j);
-		mywait = 1;
-		counter1 = 0;
-		counter2 = 0;
-		printk("local core is(inside for): %d\n",local_core);
-		/*c is # of cores which run the activity*/
-		for ( c = 0; c < 4; c++)
-		{
+	/* Check buffer sizes against poll sizes */
+	if (actInfo->pool_id == interf_actInfo->pool_id) {
+		/* Check that there is enough space in the pool if
+		 * both observed CPU and interfering CPUs will use the
+		 * same pool. */
+		if (actInfo->buffer_size + (cpus-1) * interf_actInfo->buffer_size >
+		    g_pools[actInfo->pool_id].size) {
+			pr_err(PREFIX "Experiment ABORTED -- pool ID %d is too small\n",
+			       actInfo->pool_id);
+			return -1;
+		}		
+	} else {
+		/* Check that there is enough space in the pool if
+		 * both observed CPU and interfering CPUs will use
+		 * different pools. */
+		if (actInfo->buffer_size > g_pools[actInfo->pool_id].size) {
+			pr_err(PREFIX "Experiment ABORTED -- pool ID %d is too small\n",
+			       actInfo->pool_id);
+			return -1;
+		}
+		if ((cpus-1) * interf_actInfo->buffer_size >
+		    g_pools[interf_actInfo->pool_id].size) {
+			pr_err(PREFIX "Experiment ABORTED -- pool ID %d is too small\n",
+			       interf_actInfo->pool_id);
+			return -1;
+		}		
+	}
+
+	return 0;
+}
+
+static void __prepare_activity_masks(struct cpumask * idle_cores_mask,
+				     struct cpumask * active_cores_mask,
+				     int idle_cores_count, int active_cores_count,
+				     int local_core)
+{
+	int cpus = idle_cores_count + active_cores_count;
+	int idle_cores = 0, active_cores = 0;
+	int c;
 	
-			if (c == local_core)
+	/* Reset masks */
+	cpumask_clear(idle_cores_mask);
+	cpumask_clear(active_cores_mask);
+	
+	/* Loop over the CPUs and decide what core to assign to each
+	 * activity mask */
+	for (c = 0; c < cpus; c++)
+	{
+		/* The local observation core should not be assigned
+		 * to any other activity. */
+		if (c == local_core)
 				continue;
 
-			if (counter1 < j) //when we want just one core runs f1
-			{
-				//f1_mask.set(c);
-				cpumask_set_cpu(c,&mymask1);
-				counter1++;
-			}
-			else if (counter2 < (4-j))
-			{
-				cpumask_set_cpu(c,&mymask2);
-				counter2++;
-			}
-		
-		
-		}
-
-		/*for testing mymask*/
-		for (k = 0; k < 4; k++)
+		/* Are there more cores to keep idle? */
+		if (idle_cores < idle_cores_count) 
 		{
-			if(cpumask_test_cpu(k,&mymask1))
-				printk("mymask1 %d is set\n", k);
-			//if(cpumask_test_cpu(k,&mymask2))
-			//printk("mymask2 %d is set\n", k);
-
+			cpumask_set_cpu(c, idle_cores_mask);
+			idle_cores++;
 		}
-
-		for (k = 0; k < 4; k++)
+		/* If not, mark the other cores to be active. */
+		else if (active_cores < active_cores_count)
 		{
-			if(cpumask_test_cpu(k,&mymask2))
-				printk("mymask2 %d is set\n", k);
-			//if(cpumask_test_cpu(k,&mymask2))
-			//printk("mymask2 %d is set\n", k);
+			cpumask_set_cpu(c, active_cores_mask);
+			active_cores++;
+		}	
+	}
+	
+	/* DEBUG: let's print out the current settings */
+	pr_info(PREFIX "\nDEBUG: setting activity masks. Local core: %d, "
+		"idle cores: %d, active cores: %d\n",
+		local_core, idle_cores_count, active_cores_count);
 
-		}
+	pr_info(PREFIX "\tIDLE CORE IDs: ");
+	for (c = 0; c < cpus; c++)
+	{
+		if(cpumask_test_cpu(c, idle_cores_mask))
+			printk("%d, ", c);
+	}
+	pr_info(PREFIX "\n");
 
+	pr_info(PREFIX "\tACTIVE CORE IDs: ");
+	for (c = 0; c < cpus; c++)
+	{
+		if(cpumask_test_cpu(c, active_cores_mask))
+			printk("%d, ", c);
+	}
+	pr_info(PREFIX "\n");	
+}
+
+void run_experiment (struct experiment_info * expInfo)
+{
+	unsigned long flags; // for interrupt state
+	unsigned int dur, cpus;
+	long int bandwidth, bandwidth_frac;
+	long int i, j, c;
+	long int avglat; 
+	int local_core;
+	struct cpumask idle_cores, active_cores;
+	uint64_t sum_read = 0;
+	int repeat = DEFAULT_ITER;
+
+	/* Retrieve the configuration for the activity to time on the
+	 * observed core */
+	struct activity_info * actInfo = &expInfo->obs_info;
+	struct activity_info * interf_actInfo = &expInfo->interf_info;
+
+	cpus = num_online_cpus();
+
+	if (validate_experiment(expInfo) < 0) {
+		/* Experiment validation failed. Abort experiment. */
+		return;
+	}
+
+	if (alloc_init_buffers(expInfo) < 0) {
+		/* Buffer allocation failed. Abort experiment. */
+		dealloc_buffers(expInfo);
+		return;		
+	}
+	
+	/* Initialize all the locks - TODO parametrize number of locks. */
+	for (i = 0; i < cpus; i++)
+	{
+		spin_lock_init(&cpu_lock[i]);
+		spin_lock(&cpu_lock[i]);	
+	}
+
+	local_core = get_cpu();
+	
+	/* Main experiment loop -- i holds the number of cores that
+	 * needs to be activated to generate interference, while (cpus - i)
+	 * will be the number of cores to keep idle. */
+	for (i = 0; i < cpus; i++)
+	{
+		/* Reset statistics */
+		actInfo->g_nread = 0;
+
+		/* Prepare the masks of cores that need to remain idle vs. activated at this iteration. */
+		__prepare_activity_masks(&idle_cores, &active_cores, cpus - i, i, local_core);
+		
+		/* Globally mark the beginning of an experiment  */
+		g_exp_running = 1;
+		
 		/*starting remote activities*/
-		on_each_cpu_mask(&mymask1,activity_idle,NULL,false);
-	        on_each_cpu_mask(&mymask2,activity_stress,NULL,false);
+		on_each_cpu_mask(&idle_cores, activity_idle, NULL, false);
+	        on_each_cpu_mask(&active_cores, activity_stress, interf_actInfo, false);
 
-		/*This way for all locks corresponding to all remote cores we are trying
-		  to grab the lock. spin_lock spins and tries to acquire the lock*/
-		for (z = 0; z < 4; z++)
+		/* This way for all locks corresponding to all remote
+		  cores we are trying to grab the lock. spin_lock
+		  spins and tries to acquire the lock*/
+		for (c = 0; c < cpus; c++)
 		{
-			if (z == local_core) continue; // we don want to spin on lock corresponds to local core
-			spin_lock(&my_lock[z]);
-			printk("BEFORE MEASUREMENT:lock[%d] is:%d\n",z,spin_is_locked(&my_lock[z]));
-		    
+			if (c == local_core) continue; // we don want to spin on lock corresponds to local core
+
+			/* When this lock is acquired, we know that core c has entered its main stress/idle loop. */
+			spin_lock(&cpu_lock[c]);
 		}
 
- 
-  
-  
 		local_irq_save(flags);
+
 		/*beginning of time mesurment*/
 		g_start = ktime_get_ns();
 
-		//Benchmarking: accessing the memory
-		for (i = 0; i < repeat; i++) //is just for repeating
+		// Benchmarking: perform REPEAT number of accesses to
+		// memory buffer from observed core.
+		/* TODO -- actually figure out which access type to use!! */
+		for (j = 0; j < repeat; j++)
 		{
-			if (actInfo->operation == ACTIVITY_BANDWIDTH)
-			{
-				sum_read += bandwidth_read(actInfo);// pass as pointer to keep changes
-			}
-			
-			else if (actInfo->operation == ACTIVITY_LATENCY)
-			{
-				sum_read += latency_read(actInfo); 
-			}
+			BUF_TYPE * ptr;
+			ACCESS_BUFFER(ptr, actInfo->buffer_va,
+				      actInfo->buffer_va + actInfo->buffer_size/sizeof(BUF_TYPE),
+				      CACHE_LINE/sizeof(BUF_TYPE),
+				      bw_rw);			
 		}
-		    
 
 		g_end = ktime_get_ns();
 
 		local_irq_restore(flags);
 
-		/*ending remote activities*/
-		mywait = 0;
+		/* Ending remote activities */
+		g_exp_running = 0;
 
-		for (z = 0; z < 4; z++)
+		for (c = 0; c < cpus; c++)
 		{
-			if (z == local_core) continue; // we don want to spin on lock corresponds to local core
-			spin_lock(&my_lock[z]);
+			if (c == local_core) continue; // we don want to spin on lock corresponds to local core
+			
+			spin_lock(&cpu_lock[c]);
 		}
 
+		/* Do we need a bit of delay here to allow the cores to exit? */
 		msleep(100);
 
 		dur = g_end - g_start;
-//	printk("elapsed time is: %ld cycles\n", (end-start));
-		printk("elapsed = (%d usec)\n", dur);
+
+		printk("RESULT: elapsed = (%d usec)\n", dur);
 
 		//calculation
 		if (actInfo->operation == ACTIVITY_BANDWIDTH) //BW
@@ -618,28 +739,16 @@ static void activity_idle(void* myinfo)
 			printk("average latency is: %ld\n",avglat);
 		}
 	
-	
-
-	       
-		} //j loop
+	} /* end of main loop */
 
 
 	put_cpu();
-	
-	/*freeing the buffer*/
-	if (actInfo->operation == ACTIVITY_BANDWIDTH) //BW
-	  {
-	    gen_pool_free(actInfo->alloc_pool, (unsigned long)(actInfo->buffer_va), actInfo->buffer_size);
-	  }
 
-	if (actInfo->operation == ACTIVITY_LATENCY) //Latency
-	  {
-	    gen_pool_free(actInfo->alloc_pool, (unsigned long)(actInfo->lat_buff_va), actInfo->buffer_size);
-	  }
-	
+	/* Make sure to deallocate the buffers on the way out. */
+	dealloc_buffers(expInfo);	
 }
 
-static void __print_activity(struct activityInfo * actInfo)
+static void __print_activity(struct activity_info * actInfo)
 {
 	char * act_op2string [] = {"INVALID", "BANDWIDTH", "LATENCY"};
 	printk(PREFIX "=== Activity Information: ===\n");
@@ -649,13 +758,19 @@ static void __print_activity(struct activityInfo * actInfo)
 }
 
 
-static int mm_exp_load(void) {
+static int __init mm_exp_load(void) {
 
 	int res;
-	int* ret;
-	struct activityInfo actInfo;
+	struct experiment_info expInfo;
 
 	printk(PREFIX "===== Loading Memory Benchmarking Module =====\n");
+
+	/* Setup the debugfs interface to communicate with the module */
+	res = debugfs_interface_init();
+	if (res < 0) {	
+		pr_err(PREFIX "ERROR: Unable to correctly initialize interface files.\n");
+		return -EINVAL;	
+	}
 
 	/* Start with the detection of the memory pools in the system. */
 	res = detect_mempools();
@@ -664,50 +779,65 @@ static int mm_exp_load(void) {
 		pr_err(PREFIX "ERROR: Unable to correctly detect memory pools.\n");
 		return -EINVAL;
 	}
-    
+
+	/* Go ahead and perform any initialization for the detected memory pools */
 	res = initialize_pools();
 	if (res < 0) {
 		pr_err(PREFIX "ERROR: Unable to correctly initialize memory pools.\n");
 		return -EINVAL;
 	}
 
-	actInfo.operation = ACTIVITY_BANDWIDTH;
-	actInfo.g_nread = 0;
-	actInfo.alloc_pool = mem_pool[2];
-        actInfo.buffer_size = param_buffer_size; ///should I get this from user? Yes!
+	/* This is just to try a sample experiment. Later, only the
+	 * debugfs interface will be used to launch experiments and
+	 * collect results. */
+	expInfo.obs_info.map_type = MAP_CACHE;
+	expInfo.obs_info.access_type = ACCESS_BW_RW;
+        expInfo.obs_info.buffer_size = param_buffer_size;
+	expInfo.obs_info.pool_id = 2;
 
-	__print_activity(&actInfo);
+	expInfo.interf_info.map_type = MAP_CACHE;
+	expInfo.interf_info.access_type = ACCESS_BW_RW;
+        expInfo.interf_info.buffer_size = 1*1024*1024; /* 1 MB */
+	expInfo.interf_info.pool_id = 2;
+
+	__print_activity(&expInfo.obs_info);
 	
-	measurement(&actInfo); /*benchmarking*/
+	run_experiment(&expInfo);
 
-	pr_info("KPROFILER module installed successfully.\n");
+	pr_info(PREFIX "===== success =====.\n\n");
 
 	return 0;
-
 }	
 	
 
-static void mm_exp_unload(void)
+static void __exit mm_exp_unload(void)
 {
 	int i;
 
+	printk(PREFIX "===== Removing Memory Benchmarking Module =====\n");
+
 	/* destroy genalloc memory pool */
-	for (i = 0; i < mem_no; i++)
+	for (i = 0; i < g_pools_count; i++)
 	{
+		struct mem_pool *pool = &g_pools[i];
+		if (pool->alloc_pool){
+			pr_info(PREFIX "Destroying gen_pool %d\n", i);
+	                gen_pool_destroy(pool->alloc_pool);
+		}
+
+		if (pool->pool_kva) {
+			pr_info(PREFIX "Unmapping pool %d\n", i);
+			memunmap((void *)pool->pool_kva);
+		}
+	}
+
+	/* Free any memory taken by pool descriptors */
+	if (g_pools_count) {
+		kfree(g_pools);
+		g_pools = NULL;
+	}
 	
-		if (mem_pool[i]){
-	                gen_pool_destroy(mem_pool[i]);
-			printk("destroying happened successfully\n");}
-	}
-        
-
-	/* Unmap & release memory regions */
-	for (i = 0; i < mem_no; i++)
-	{
-		memunmap((void *)__pool_kva_lo[i]);
-	}
-
-	pr_info("KPROFILER module uninstalled successfully.\n");
+	pr_info(PREFIX "===== success =====.\n\n");
 }
 
 module_init(mm_exp_load);
