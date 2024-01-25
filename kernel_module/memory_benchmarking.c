@@ -77,8 +77,6 @@ unsigned int g_pools_count = 0;
 struct mem_pool *g_pools = NULL;
 /* END - Global variables */
 
-volatile unsigned int g_start;	  /* starting time */
-volatile unsigned int g_end;      /* ending time */
 volatile int g_exp_running = 1;   /* global var to tell activities on other core to start/stop*/
 
 /*defining spinlocks this way for dynamic initialization*/
@@ -112,7 +110,7 @@ int detect_mempools(void)
 	  with */
 
 	found_node = NULL;
-	for (i = 0; i <= g_pools_count; i++){
+	for (i = 0; i < g_pools_count; i++){
 		found_node = of_find_compatible_node(found_node,"memory","genpool");
 
 		if (!found_node){
@@ -184,6 +182,7 @@ error_unmap:
 	return -1;	
 }
 
+#if 0
 uint64_t latency_read(struct activity_info* myinfo)
 {
 	int i;
@@ -215,6 +214,7 @@ int64_t bandwidth_read(struct activity_info* myinfo)
 
 	return readsum;
 }
+#endif
 
 int alloc_map_cache_buffer (struct activity_info * actInfo, int cpus) 
 { 
@@ -350,38 +350,57 @@ static inline void __access_bw_rw (BUF_TYPE * r, BUF_TYPE * w)
 		
 	__asm__ volatile(
 		"ldr %0, [%1]\n\t"     // Load from the address in r
-		"str %0, [%2]"       // Store into address in w
+		"str %0, [%2]\n\t"       // Store into address in w
 		: "=r" (tmp)         // Output operand: store the result in tmp
 		: "r" (r), "r" (w)   // Input operand: address to load from is in r
 		: "memory"
 		);
 }
 
-#define ACCESS_BUFFER(var, start, end, incr, access_type)	\
-	do {							\
-		for (var = start; var < end; var += incr)	\
-			__access_##access_type(var, var);	\
+#define ACCESS_BUFFER(start, end, incr, access_type)			\
+	do {								\
+		register BUF_TYPE * __var = start;			\
+		register BUF_TYPE *__end = end;				\
+		register u64 __incr = incr;				\
+		for (; __var < __end; __var += __incr)			\
+			__access_##access_type(__var, __var);		\
+	} while (0)
+
+#define ACCESS_BUFFER_UNTIL(stop_cond, start, end, incr, access_type)	\
+	while(stop_cond) {						\
+		ACCESS_BUFFER(start, end, incr, access_type);		\
+	}
+
+#define ACCESS_BUFFER_REPEAT(repeat, start, end, incr, access_type)	\
+	do {								\
+	        register int __cnt = 0;					\
+		for(; __cnt < repeat; ++__cnt) {			\
+			ACCESS_BUFFER(start, end, incr, access_type);	\
+		}							\
 	} while (0)
 
 static void activity_stress(void * params)
 {
 	struct activity_info * actInfo = (struct activity_info * )params;
 	unsigned long flags;
-	BUF_TYPE * ptr;
 
 	local_irq_save(flags);
 	get_cpu();
 	spin_unlock(&cpu_lock[smp_processor_id()]);
 
-	/* TODO -- actually figure out which access type to use!! */
-	while(g_exp_running)
-	{
-		ACCESS_BUFFER(ptr, actInfo->buffer_va,
-			      actInfo->buffer_va + actInfo->buffer_size/sizeof(BUF_TYPE),
-			      CACHE_LINE/sizeof(BUF_TYPE),
-			      bw_rw);
+	if (actInfo->access_type == ACCESS_BW_RW) {
+		/* TODO -- actually figure out which access type to use!! */
+		ACCESS_BUFFER_UNTIL(g_exp_running, actInfo->buffer_va,
+				    actInfo->buffer_va + actInfo->buffer_size/sizeof(BUF_TYPE),
+				    CACHE_LINE/sizeof(BUF_TYPE),
+				    bw_rw);
+	} else if (actInfo->access_type == ACCESS_BW_READ) {
+		ACCESS_BUFFER_UNTIL(g_exp_running, actInfo->buffer_va,
+				    actInfo->buffer_va + actInfo->buffer_size/sizeof(BUF_TYPE),
+				    CACHE_LINE/sizeof(BUF_TYPE),
+				    bw_read);
 	}
-	
+		
 	spin_unlock(&cpu_lock[smp_processor_id()]);
 
         put_cpu();
@@ -453,8 +472,20 @@ int alloc_init_buffers (struct experiment_info * expInfo)
 		pr_err(PREFIX "Experiment ABORTED -- ACCESS_LATENCY not supported yet.\n");
 		return -1;		
 	}
-		
+
+	/* Finally allocate memory to record the results of the experiment */
+	expInfo->results = (struct experiment_result *)kmalloc(cpus * sizeof(struct experiment_result),
+							       GFP_KERNEL);
+	
 	return 0;		
+}
+
+void dealloc_results(struct experiment_info * expInfo)
+{
+	if (expInfo->results) {
+		kfree(expInfo->results);
+		expInfo->results = NULL;
+	}
 }
 
 void dealloc_buffers(struct experiment_info * expInfo)
@@ -495,7 +526,10 @@ int validate_experiment (struct experiment_info * expInfo)
 	cpus = num_online_cpus();
 
 	/* Clean-up and initialize aux fields */
-	expInfo->bytes_count = 0;
+	if(expInfo->results) {
+		pr_err(PREFIX "Experiment ABORTED -- non-null resultset at beginning of experiment.\n");
+		return -1;		
+	}
 
 	/* Find the pointer to the genpool allocation pools */
 	if (actInfo->pool_id < 0 || actInfo->pool_id >= g_pools_count) {
@@ -562,7 +596,7 @@ static void __prepare_activity_masks(struct cpumask * idle_cores_mask,
 				     int idle_cores_count, int active_cores_count,
 				     int local_core)
 {
-	int cpus = idle_cores_count + active_cores_count;
+	int cpus = idle_cores_count + active_cores_count + 1;
 	int idle_cores = 0, active_cores = 0;
 	int c;
 	
@@ -594,7 +628,7 @@ static void __prepare_activity_masks(struct cpumask * idle_cores_mask,
 	}
 	
 	/* DEBUG: let's print out the current settings */
-	pr_info(PREFIX "\nDEBUG: setting activity masks. Local core: %d, "
+	pr_info(PREFIX "DEBUG: setting activity masks. Local core: %d, "
 		"idle cores: %d, active cores: %d\n",
 		local_core, idle_cores_count, active_cores_count);
 
@@ -602,7 +636,7 @@ static void __prepare_activity_masks(struct cpumask * idle_cores_mask,
 	for (c = 0; c < cpus; c++)
 	{
 		if(cpumask_test_cpu(c, idle_cores_mask))
-			printk("%d, ", c);
+			printk(KERN_CONT "%d, ", c);
 	}
 	pr_info(PREFIX "\n");
 
@@ -610,7 +644,7 @@ static void __prepare_activity_masks(struct cpumask * idle_cores_mask,
 	for (c = 0; c < cpus; c++)
 	{
 		if(cpumask_test_cpu(c, active_cores_mask))
-			printk("%d, ", c);
+			printk(KERN_CONT "%d, ", c);
 	}
 	pr_info(PREFIX "\n");	
 }
@@ -618,15 +652,12 @@ static void __prepare_activity_masks(struct cpumask * idle_cores_mask,
 void run_experiment (struct experiment_info * expInfo)
 {
 	unsigned long flags; // for interrupt state
-	unsigned int dur, cpus;
-	long int bandwidth, bandwidth_frac;
-	long int i, j, c;
-	long int avglat; 
+	unsigned int cpus;
+	long int i, c;
 	int local_core;
 	struct cpumask idle_cores, active_cores;
-	uint64_t sum_read = 0;
 	int repeat = DEFAULT_ITER;
-
+	
 	/* Retrieve the configuration for the activity to time on the
 	 * observed core */
 	struct activity_info * actInfo = &expInfo->obs_info;
@@ -659,11 +690,12 @@ void run_experiment (struct experiment_info * expInfo)
 	 * will be the number of cores to keep idle. */
 	for (i = 0; i < cpus; i++)
 	{
-		/* Reset statistics */
-		actInfo->g_nread = 0;
+		/* Init statistics */
+		struct experiment_result * result = &expInfo->results[i];
+		result->interf_cpus = i;
 
 		/* Prepare the masks of cores that need to remain idle vs. activated at this iteration. */
-		__prepare_activity_masks(&idle_cores, &active_cores, cpus - i, i, local_core);
+		__prepare_activity_masks(&idle_cores, &active_cores, cpus - i - 1, i, local_core);
 		
 		/* Globally mark the beginning of an experiment  */
 		g_exp_running = 1;
@@ -686,22 +718,18 @@ void run_experiment (struct experiment_info * expInfo)
 		local_irq_save(flags);
 
 		/*beginning of time mesurment*/
-		g_start = ktime_get_ns();
+		result->exp_start = ktime_get_ns();
 
 		// Benchmarking: perform REPEAT number of accesses to
 		// memory buffer from observed core.
 		/* TODO -- actually figure out which access type to use!! */
-		for (j = 0; j < repeat; j++)
-		{
-			BUF_TYPE * ptr;
-			ACCESS_BUFFER(ptr, actInfo->buffer_va,
+		ACCESS_BUFFER_REPEAT(repeat, actInfo->buffer_va,
 				      actInfo->buffer_va + actInfo->buffer_size/sizeof(BUF_TYPE),
 				      CACHE_LINE/sizeof(BUF_TYPE),
-				      bw_rw);			
-		}
+				      bw_rw);
 
-		g_end = ktime_get_ns();
-
+		result->exp_end = ktime_get_ns();
+		
 		local_irq_restore(flags);
 
 		/* Ending remote activities */
@@ -709,7 +737,8 @@ void run_experiment (struct experiment_info * expInfo)
 
 		for (c = 0; c < cpus; c++)
 		{
-			if (c == local_core) continue; // we don want to spin on lock corresponds to local core
+			if (c == local_core)
+				continue; // we don want to spin on lock corresponds to local core
 			
 			spin_lock(&cpu_lock[c]);
 		}
@@ -717,30 +746,27 @@ void run_experiment (struct experiment_info * expInfo)
 		/* Do we need a bit of delay here to allow the cores to exit? */
 		msleep(100);
 
-		dur = g_end - g_start;
-
-		printk("RESULT: elapsed = (%d usec)\n", dur);
-
-		//calculation
-		if (actInfo->operation == ACTIVITY_BANDWIDTH) //BW
-		{
-			printk("g_nread(bytes read) = %lld\n", (uint64_t)(actInfo->g_nread));
-			bandwidth = (uint64_t)actInfo->g_nread / (dur / 1000);
-			bandwidth_frac = (uint64_t)actInfo->g_nread % (dur / 1000);
-
-			printk("B/W = %ld.%ld MB/s", bandwidth, bandwidth_frac);
-			
+		/* Compute how much traffic was generated by this experiment */
+		if (actInfo->access_type == ACCESS_BW_READ ||
+		    actInfo->access_type == ACCESS_BW_WRITE ||
+		    actInfo->access_type == ACCESS_BW_RW ||
+		    actInfo->access_type == ACCESS_BW_READ_NT ||
+		    actInfo->access_type == ACCESS_BW_WRITE_NT ||
+		    actInfo->access_type == ACCESS_BW_RW_NT) {
+			result->bytes_r = actInfo->buffer_size * repeat;
 		}
 
-		if (actInfo->operation == ACTIVITY_LATENCY) //Latency
-		{
-		  avglat = dur/((actInfo->buffer_size*repeat)/CACHE_LINE);
-		  printk("SIZE is %ld\n",((actInfo->buffer_size*repeat)/CACHE_LINE));
-			printk("average latency is: %ld\n",avglat);
+		if (actInfo->access_type == ACCESS_BW_WRITE ||
+		    actInfo->access_type == ACCESS_BW_RW ||
+		    actInfo->access_type == ACCESS_BW_WRITE_NT ||
+		    actInfo->access_type == ACCESS_BW_RW_NT) {
+			result->bytes_w = actInfo->buffer_size * repeat;
+		} else {
+			result->bytes_w = 0;
 		}
-	
+
+		pr_info(PREFIX "Experiment Completed with %ld interfering cores.\n", i);
 	} /* end of main loop */
-
 
 	put_cpu();
 
@@ -748,20 +774,9 @@ void run_experiment (struct experiment_info * expInfo)
 	dealloc_buffers(expInfo);	
 }
 
-static void __print_activity(struct activity_info * actInfo)
-{
-	char * act_op2string [] = {"INVALID", "BANDWIDTH", "LATENCY"};
-	printk(PREFIX "=== Activity Information: ===\n");
-	printk(PREFIX "operation: %s\n", act_op2string[actInfo->operation]);
-	printk(PREFIX "buffer_size: %ld bytes\n", actInfo->buffer_size);
-	printk(PREFIX "=============================\n");
-}
-
-
 static int __init mm_exp_load(void) {
 
 	int res;
-	struct experiment_info expInfo;
 
 	printk(PREFIX "===== Loading Memory Benchmarking Module =====\n");
 
@@ -777,33 +792,18 @@ static int __init mm_exp_load(void) {
 
 	if (res < 0) {
 		pr_err(PREFIX "ERROR: Unable to correctly detect memory pools.\n");
+		err_debugfs_interface_exit();
 		return -EINVAL;
 	}
 
 	/* Go ahead and perform any initialization for the detected memory pools */
 	res = initialize_pools();
 	if (res < 0) {
+		err_debugfs_interface_exit();
 		pr_err(PREFIX "ERROR: Unable to correctly initialize memory pools.\n");
 		return -EINVAL;
 	}
-
-	/* This is just to try a sample experiment. Later, only the
-	 * debugfs interface will be used to launch experiments and
-	 * collect results. */
-	expInfo.obs_info.map_type = MAP_CACHE;
-	expInfo.obs_info.access_type = ACCESS_BW_RW;
-        expInfo.obs_info.buffer_size = param_buffer_size;
-	expInfo.obs_info.pool_id = 2;
-
-	expInfo.interf_info.map_type = MAP_CACHE;
-	expInfo.interf_info.access_type = ACCESS_BW_RW;
-        expInfo.interf_info.buffer_size = 1*1024*1024; /* 1 MB */
-	expInfo.interf_info.pool_id = 2;
-
-	__print_activity(&expInfo.obs_info);
 	
-	run_experiment(&expInfo);
-
 	pr_info(PREFIX "===== success =====.\n\n");
 
 	return 0;
@@ -816,6 +816,9 @@ static void __exit mm_exp_unload(void)
 
 	printk(PREFIX "===== Removing Memory Benchmarking Module =====\n");
 
+	/* Destroy debufs interface */
+	debugfs_interface_exit();
+	
 	/* destroy genalloc memory pool */
 	for (i = 0; i < g_pools_count; i++)
 	{
