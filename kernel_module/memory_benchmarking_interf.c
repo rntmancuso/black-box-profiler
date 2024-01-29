@@ -199,6 +199,12 @@ ssize_t experiment_write(struct file *file, const char __user *buffer,
 	} else {
 		cur_exp.interf_info.access_type = ACCESS_BW_WRITE;
 	}
+
+	if (cur_exp.results) {
+		pr_warn(PREFIX "WARNING: Deallocating previous experiment results.\n");
+	}
+	
+	dealloc_results(&cur_exp);
 	
 	kfree(kbuf);
 	
@@ -217,8 +223,10 @@ static const struct file_operations experiment_fops = {
 /* 'cmd' file operations */
 static int cmd_show(struct seq_file *m, void *v)
 {
-	seq_printf(m, "Displaying cmd information\n");
-	// Add logic to display cmd information
+	seq_printf(m, "Available commands:\n");
+	seq_printf(m, "\tstart|START: begin new experiment\n");
+	seq_printf(m, "\treset|RESET: reset experiment history\n");
+	seq_printf(m, "\tvalid|VALID: validate current experiment setup\n");
 	return 0;
 }
 
@@ -227,18 +235,76 @@ static int cmd_open(struct inode *inode, struct file *file)
 	return single_open(file, cmd_show, NULL);
 }
 
+ssize_t cmd_write(struct file *file, const char __user *buffer,
+			      size_t count, loff_t *data)
+{
+	char *kbuf;
+	
+	/* Allocate kernel buffer */
+	kbuf = kmalloc(count + 1, GFP_KERNEL);
+	if (!kbuf)
+		return -ENOMEM;
+	
+	/*  Copy data from user space */
+	if (copy_from_user(kbuf, buffer, count)) {
+		kfree(kbuf);
+		return -EFAULT;
+	}
+	
+	kbuf[count] = '\0'; // Null-terminate the string
+
+	if (strcmp(kbuf, "start") == 0 || strcmp(kbuf, "START") == 0) {
+		run_experiment(&cur_exp);
+	} else if (strcmp(kbuf, "reset") == 0 || strcmp(kbuf, "RESET") == 0) {
+		;/* TODO -- Erase results once results array is implemented */
+	} else if (strcmp(kbuf, "validate") == 0 || strcmp(kbuf, "VALIDATE") == 0) {
+		;/* TODO -- Add call to experiment validation */
+	} else {
+		;/* TODO -- Handle invalid command */
+	}
+	
+	kfree(kbuf);
+	
+	return count;	
+}
+
 static const struct file_operations cmd_fops = {
 	.owner = THIS_MODULE,
 	.open = cmd_open,
 	.read = seq_read,
 	.llseek = seq_lseek,
 	.release = single_release,
+	.write = cmd_write,
 };
 
 /* 'results' file operations */
 static int results_show(struct seq_file *m, void *v)
 {
-	seq_printf(m, "Displaying results information\n");
+	int exp_len = 4; /* TODO get this from struct */
+	int i;
+	struct experiment_result * results = cur_exp.results;
+	
+	seq_printf(m, "== Displaying results information ==\n");
+
+	experiment_show(m, v);
+
+	seq_printf(m, "RESULTS:\n");
+
+	if (!results) {
+		seq_printf(m, "No results available for this experiment. Did you run it?\n");
+		return 0;
+	}
+	
+	for (i = 0; i < exp_len; ++i) {
+		results = &cur_exp.results[i];
+		
+		seq_printf(m, "Active Cores: %d; Start (ns): %lld; End (ns): %lld;"
+			   " Diff (ns): %lld;"
+			   " Bytes R: %lld; Bytes W: %lld\n",
+			   i, results->exp_start, results->exp_end,
+			   results->exp_end - results->exp_start,
+			   results->bytes_r, results->bytes_w);
+	}
 	// Add logic to display results information
 	return 0;
 }
@@ -256,6 +322,11 @@ static const struct file_operations results_fops = {
 	.release = single_release,
 };
 
+void err_debugfs_interface_exit(void)
+{
+	debugfs_remove_recursive(membench_dir);
+}
+
 /* Debugfs initialization routine */
 int __init debugfs_interface_init(void)
 {
@@ -264,6 +335,7 @@ int __init debugfs_interface_init(void)
 	/* If everything looks good, initialize the buffer pointers. */
 	cur_exp.obs_info.buffer_va = NULL;
 	cur_exp.interf_info.buffer_va = NULL;
+	cur_exp.results = NULL;
 	
 	membench_dir = debugfs_create_dir("membench", NULL);
 	if (IS_ERR(membench_dir)) {
@@ -283,7 +355,7 @@ int __init debugfs_interface_init(void)
 		return PTR_ERR(retval);
 	}
 
-	retval = debugfs_create_file("cmd", 0444, membench_dir, NULL, &cmd_fops);
+	retval = debugfs_create_file("cmd", 0644, membench_dir, NULL, &cmd_fops);
 	if (IS_ERR(retval)) {
 		pr_err(PREFIX "Unable to create debugfs file: %s.\n", "cmd");
 		return PTR_ERR(retval);
