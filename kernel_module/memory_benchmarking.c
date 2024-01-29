@@ -56,8 +56,6 @@ module_param(verbose, int, 0660);
 static long param_buffer_size = DEFAULT_BUFFER_SIZE;
 module_param(param_buffer_size, long, S_IRUGO);
 
-static int param_activity = ACTIVITY_BANDWIDTH;
-module_param(param_activity, int, S_IRUGO);
 /* END   - Kernel Module Parameter Definition */
 
 /**************for physical memory based on dtb 
@@ -78,6 +76,7 @@ struct mem_pool *g_pools = NULL;
 /* END - Global variables */
 
 volatile int g_exp_running = 1;   /* global var to tell activities on other core to start/stop*/
+atomic_t g_stressor_id = ATOMIC_INIT(0); /* Used by the stressor cores to know their order of arrival */
 
 /*defining spinlocks this way for dynamic initialization*/
 static spinlock_t cpu_lock[4]; // one lock per core
@@ -316,90 +315,114 @@ int latency_buffer_allocation(struct activity_info* myinfo)
 /* These are the low-level functions that correspond to the various
  * access types supported for benchmarking */
 
-static inline void __access_bw_read (BUF_TYPE * r, BUF_TYPE * w)
+static inline void __access_bw_read (BUF_TYPE * r, BUF_TYPE * w, BUF_TYPE * end)
 {
 	BUF_TYPE tmp;
 	
 	(void)w;
 	
 	__asm__ volatile(
-		"ldr %0, [%1]"  // Load from the address in r
-		: "=r" (tmp)    // Output operand: store the result in tmp
-		: "r" (r)       // Input operand: address to load from is in r
+		"%=:               \n\t" 
+		"ldr %0, [%1], %3  \n\t"  // Load from the address in r
+		"cmp %2, %1        \n\t"  // Compare current and end pointers
+		"b.hi %=b          \n\t"  // Loop if end not reached
+		: "=&r" (tmp), "+r" (r)    // Output operand: store the result in tmp
+		: "r"(end), "I" (BUF_INCR)  // Input operand: address to load from is in r
 		: "memory"
 		);
 }
 
-static inline void __access_bw_write (BUF_TYPE * r, BUF_TYPE * w)
+static inline void __access_bw_write (BUF_TYPE * r, BUF_TYPE * w, BUF_TYPE * end)
 {
-	BUF_TYPE tmp;
-	
-	(void)r;
+	BUF_TYPE tmp = (BUF_TYPE)w;
 	
 	__asm__ volatile(
-		"str %1, [%0]"       // Store at the address in w
-		:                    // No output operands
-		: "r" (w), "r" (tmp) // Input operand: address to store at, and value to store
+		"%=:               \n\t" 
+		"str %1, [%0], %3  \n\t"  // Store at the address in w
+		"cmp %2, %0        \n\t"  // Compare current and end pointers
+		"b.hi %=b          \n\t"  // Loop if end not reached
+		: "+&r" (w)                // Output operand: store the result in tmp
+		: "r" (tmp), "r"(end), "I" (BUF_INCR)  // Input operand: address to load from is in r
 		: "memory"
 		);
+
 }
 
-static inline void __access_bw_rw (BUF_TYPE * r, BUF_TYPE * w)
+static inline void __access_bw_rw (BUF_TYPE * r, BUF_TYPE * w, BUF_TYPE * end)
 {
 	BUF_TYPE tmp;
 		
 	__asm__ volatile(
-		"ldr %0, [%1]\n\t"     // Load from the address in r
-		"str %0, [%2]\n\t"       // Store into address in w
-		: "=r" (tmp)         // Output operand: store the result in tmp
-		: "r" (r), "r" (w)   // Input operand: address to load from is in r
+		"%=:               \n\t" 
+		"ldr %0, [%1]      \n\t"  // Load from the address in r
+		"str %0, [%1], %3  \n\t"  // Store at the address in r		
+		"cmp %2, %1        \n\t"  // Compare current and end pointers
+		"b.hi %=b          \n\t"  // Loop if end not reached
+		: "=&r" (tmp), "+r" (r)    // Output operand: store the result in tmp
+		: "r"(end), "I" (BUF_INCR)  // Input operand: address to load from is in r
 		: "memory"
 		);
 }
 
-#define ACCESS_BUFFER(start, end, incr, access_type)			\
+#define ACCESS_BUFFER(start, end, access_type)				\
 	do {								\
 		register BUF_TYPE * __var = start;			\
 		register BUF_TYPE *__end = end;				\
-		register u64 __incr = incr;				\
-		for (; __var < __end; __var += __incr)			\
-			__access_##access_type(__var, __var);		\
+		__access_##access_type(__var, __var, __end);		\
 	} while (0)
 
-#define ACCESS_BUFFER_UNTIL(stop_cond, start, end, incr, access_type)	\
+#define ACCESS_BUFFER_UNTIL(stop_cond, start, end, access_type)		\
 	while(stop_cond) {						\
-		ACCESS_BUFFER(start, end, incr, access_type);		\
+		ACCESS_BUFFER(start, end, access_type);			\
 	}
 
-#define ACCESS_BUFFER_REPEAT(repeat, start, end, incr, access_type)	\
+#define ACCESS_BUFFER_REPEAT(repeat, start, end, access_type)		\
 	do {								\
 	        register int __cnt = 0;					\
 		for(; __cnt < repeat; ++__cnt) {			\
-			ACCESS_BUFFER(start, end, incr, access_type);	\
+			ACCESS_BUFFER(start, end, access_type);		\
 		}							\
 	} while (0)
 
 static void activity_stress(void * params)
 {
 	struct activity_info * actInfo = (struct activity_info * )params;
+	BUF_TYPE * buf_start;
 	unsigned long flags;
+	unsigned long local_id;
 
+	/* Get local ID */
+	local_id = atomic_inc_return(&g_stressor_id);
+	buf_start = actInfo->buffer_va + ((local_id) * actInfo->buffer_size/sizeof(BUF_TYPE));
+	
 	local_irq_save(flags);
 	get_cpu();
 	spin_unlock(&cpu_lock[smp_processor_id()]);
 
-	if (actInfo->access_type == ACCESS_BW_RW) {
-		/* TODO -- actually figure out which access type to use!! */
-		ACCESS_BUFFER_UNTIL(g_exp_running, actInfo->buffer_va,
-				    actInfo->buffer_va + actInfo->buffer_size/sizeof(BUF_TYPE),
-				    CACHE_LINE/sizeof(BUF_TYPE),
-				    bw_rw);
-	} else if (actInfo->access_type == ACCESS_BW_READ) {
-		ACCESS_BUFFER_UNTIL(g_exp_running, actInfo->buffer_va,
-				    actInfo->buffer_va + actInfo->buffer_size/sizeof(BUF_TYPE),
-				    CACHE_LINE/sizeof(BUF_TYPE),
+	switch (actInfo->access_type) {
+	case ACCESS_BW_READ:
+		ACCESS_BUFFER_UNTIL(g_exp_running, buf_start,
+				    buf_start + actInfo->buffer_size/sizeof(BUF_TYPE),
 				    bw_read);
-	}
+		break;
+	case ACCESS_BW_WRITE:
+		ACCESS_BUFFER_UNTIL(g_exp_running, buf_start,
+				    buf_start + actInfo->buffer_size/sizeof(BUF_TYPE),
+				    bw_write);
+		break;		
+	case ACCESS_BW_RW:
+		ACCESS_BUFFER_UNTIL(g_exp_running, buf_start,
+				    buf_start + actInfo->buffer_size/sizeof(BUF_TYPE),
+				    bw_rw);
+		break;
+	case ACCESS_BW_READ_NT:
+	case ACCESS_BW_WRITE_NT:
+	case ACCESS_BW_RW_NT:
+	case ACCESS_LATENCY:
+	case ACCESS_LATENCY_NT:
+	default:
+		break;		
+	};
 		
 	spin_unlock(&cpu_lock[smp_processor_id()]);
 
@@ -699,6 +722,7 @@ void run_experiment (struct experiment_info * expInfo)
 		
 		/* Globally mark the beginning of an experiment  */
 		g_exp_running = 1;
+		atomic_set(&g_stressor_id, 0);
 		
 		/*starting remote activities*/
 		on_each_cpu_mask(&idle_cores, activity_idle, NULL, false);
@@ -723,10 +747,31 @@ void run_experiment (struct experiment_info * expInfo)
 		// Benchmarking: perform REPEAT number of accesses to
 		// memory buffer from observed core.
 		/* TODO -- actually figure out which access type to use!! */
-		ACCESS_BUFFER_REPEAT(repeat, actInfo->buffer_va,
-				      actInfo->buffer_va + actInfo->buffer_size/sizeof(BUF_TYPE),
-				      CACHE_LINE/sizeof(BUF_TYPE),
-				      bw_rw);
+
+		switch (actInfo->access_type) {
+		case ACCESS_BW_READ:
+			ACCESS_BUFFER_REPEAT(repeat, actInfo->buffer_va,
+					     actInfo->buffer_va + actInfo->buffer_size/sizeof(BUF_TYPE),
+					     bw_read);
+			break;
+		case ACCESS_BW_WRITE:
+			ACCESS_BUFFER_REPEAT(repeat, actInfo->buffer_va,
+					     actInfo->buffer_va + actInfo->buffer_size/sizeof(BUF_TYPE),
+					     bw_write);
+			break;
+		case ACCESS_BW_RW:
+			ACCESS_BUFFER_REPEAT(repeat, actInfo->buffer_va,
+					     actInfo->buffer_va + actInfo->buffer_size/sizeof(BUF_TYPE),
+					     bw_rw);
+			break;
+		case ACCESS_BW_READ_NT:
+		case ACCESS_BW_WRITE_NT:
+		case ACCESS_BW_RW_NT:
+		case ACCESS_LATENCY:
+		case ACCESS_LATENCY_NT:
+		default:
+			break;
+		};
 
 		result->exp_end = ktime_get_ns();
 		
