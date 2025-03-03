@@ -122,7 +122,7 @@ ssize_t experiment_write(struct file *file, const char __user *buffer,
 		     &cur_exp.interf_info.__raw_map_type, &cur_exp.interf_info.__raw_access_type,
 		     &cur_exp.interf_info.buffer_size, &cur_exp.interf_info.pool_id
 		);
-
+	//printk("%x %x\n", cur_exp.obs_info.perf_counter, cur_exp.interf_info.perf_counter);
 	/* Convert human-readable access/map type to enum/integer value */
 	if (cur_exp.obs_info.__raw_map_type == 'c' ||
 	    cur_exp.obs_info.__raw_map_type == 'C') {
@@ -322,6 +322,85 @@ static const struct file_operations results_fops = {
 	.release = single_release,
 };
 
+/*perf counter file operation*/
+static int perfcont_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "Available Performance Counters:\n");
+	seq_printf(m, "\t performance counter for core under observation\n");
+	seq_printf(m, "\t performance counters for core under observation : %x\n", cur_exp.obs_info.perf_counter);
+        seq_printf(m, "\t performance counters for interfering cores : %x\n", cur_exp.interf_info.perf_counter);
+	//seq_printf(m, "\tvalid|VALID: validate current experiment setup\n");
+	return 0;
+	
+	/* seq_printf(m, "=== Current Experiment ===\n"); */
+	/* seq_printf(m, "OBSERVED:\n"); */
+	/* seq_printf(m, "\t Map Type: %s\n", map_type2string[cur_exp.obs_info.map_type]); */
+	/* seq_printf(m, "\t Access Type: %s\n", access_type2string[cur_exp.obs_info.access_type]); */
+	/* seq_printf(m, "\t Buffer Size: 0x%08lx\n", cur_exp.obs_info.buffer_size); */
+	/* seq_printf(m, "\t Pool ID: %d\n", cur_exp.obs_info.pool_id); */
+	/* seq_printf(m, "INTERFERENCE:\n");  */
+	/* seq_printf(m, "\t Map Type: %s\n", map_type2string[cur_exp.interf_info.map_type]); */
+	/* seq_printf(m, "\t Access Type: %s\n", access_type2string[cur_exp.interf_info.access_type]); */
+	/* seq_printf(m, "\t Buffer Size: 0x%08lx\n", cur_exp.interf_info.buffer_size); */
+	/* seq_printf(m, "\t Pool ID: %d\n", cur_exp.interf_info.pool_id); */
+	/* seq_printf(m, "\nUSAGE: Provide new experiment definition with format:\n"); */
+	/* seq_printf(m, "<OBS map type: c/n> <OBS access type: r/w/b/s/x/c/l/m> " */
+	/* 	   "<OBS buffer size> <OBS pool ID> " */
+	/* 	   "<INT map type: c/n> <INT access type: r/w/b/s/x/c/l/m> " */
+	/* 	   "<INT buffer size> <INT pool ID>\n" */
+	/* 	); */
+	//seq_printf(m, "==========================\n");
+}
+
+static int perfcont_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, perfcont_show, NULL);
+}
+
+ssize_t perfcont_write(struct file *file, const char __user *buffer,
+			      size_t count, loff_t *data)
+{
+	char *kbuf;
+	int ret;
+
+	/*Checking against buffer size limits to avoid overflow?*/
+	
+	/* Allocate kernel buffer */
+	kbuf = kmalloc(count + 1, GFP_KERNEL);
+	if (!kbuf)
+		return -ENOMEM;
+	
+	/*  Copy data from user space */
+	if (copy_from_user(kbuf, buffer, count)) {
+		kfree(kbuf);
+		return -EFAULT;
+	}
+	
+	kbuf[count] = '\0'; // Null-terminate the string
+       	ret = sscanf(kbuf, "%x %x", &cur_exp.obs_info.perf_counter, &cur_exp.interf_info.perf_counter);
+	  if(ret == 0)
+	    {
+	       printk("Error: Failed to parse.\n");
+	    }
+	  printk("%x %x\n", cur_exp.obs_info.perf_counter, cur_exp.interf_info.perf_counter);
+
+	  /*should we check the deallocation on the previous one?*/
+	kfree(kbuf);
+	
+	return count;	
+}
+
+static const struct file_operations perfcount_fops = {
+	.owner = THIS_MODULE,
+	.open = perfcont_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+	.write = perfcont_write,
+};
+
+/*--------- end of perf counter file operation----------------*/
+
 void err_debugfs_interface_exit(void)
 {
 	debugfs_remove_recursive(membench_dir);
@@ -358,6 +437,12 @@ int __init debugfs_interface_init(void)
 	retval = debugfs_create_file("cmd", 0644, membench_dir, NULL, &cmd_fops);
 	if (IS_ERR(retval)) {
 		pr_err(PREFIX "Unable to create debugfs file: %s.\n", "cmd");
+		return PTR_ERR(retval);
+	}
+
+	retval = debugfs_create_file("perfcount", 0644, membench_dir, NULL, &perfcount_fops);
+	if (IS_ERR(retval)) {
+		pr_err(PREFIX "Unable to create debugfs file: %s.\n", "perfcount");
 		return PTR_ERR(retval);
 	}
 
