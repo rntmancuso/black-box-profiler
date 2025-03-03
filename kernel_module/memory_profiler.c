@@ -100,16 +100,18 @@ module_param(verbose, int, 0660);
 
 
 /**************for physical memory based on dtb 
-memory type, MEM_START, MEM_SIZE
+memory type, pool number, MEM_START, MEM_SIZE
 BRAM         
 FPGA-DRAM           0xfffc0000UL 
 OCM
-DRAM
+DRAM, 2, 
 ***************/
 
 int mem_no = 0; //for now, but I think is better to pass it rather than having as general
 
 #define NUMA_NODE_THIS    -1
+
+#define PGTABLE_POOL_ALLOC 2 //for now I assume 2 is DRAM, for choosing pool number
 
 #define THRESHOLD /*19630000*/112927923
 
@@ -148,7 +150,10 @@ struct MemRange *mem;
 extern struct page * (*alloc_pvtpool_page) (struct page *, unsigned long);
 extern int (*free_pvtpool_page) (struct page *);
 extern struct profile* (*profile_decomposer) (char* profile);
-
+//Gol
+//test my hook
+extern struct page * (*alloc_pvtpool_pgtble) (struct mm_struct *mm);
+extern int (*free_pvtpool_pgtble) (unsigned long page);
 
 
 
@@ -162,7 +167,7 @@ static inline void prefetch_page(void * page_va) {
 
 
 static bool __addr_in_gen_pool(struct gen_pool *pool, unsigned long start,
-                        size_t size)
+			       size_t size)
 {
  	bool found = false;
         unsigned long end = start + size - 1;
@@ -184,8 +189,8 @@ static bool __addr_in_gen_pool(struct gen_pool *pool, unsigned long start,
 
 /*int*/struct profile*  my_profile_decomposer(char* profile)
 {
-  // struct mm_struct *mm;
-  //struct vm_area_struct *vma;
+	// struct mm_struct *mm;
+	//struct vm_area_struct *vma;
 	//	struct file *file;
 	//dev_t dev = 0;
 	//vm_flags_t flags;
@@ -311,7 +316,7 @@ void pool_range(void){
 		mem_type[i] = of_find_compatible_node(mem_type[i-1],"memory","genpool");
 
 		if (!mem_type[i]){
-		  //printk("END of memory nodes\n");
+			//printk("END of memory nodes\n");
 			break;
 		}
 
@@ -512,11 +517,11 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 				//printk("curr_addr : %lx and params->vaddr : %lx\n", curr_addr, params->vaddr);
 				if(curr_addr == params->vaddr)//if the page belongs to profile
 				{
-				  //printk("When addresses are equal\n");
+					//printk("When addresses are equal\n");
                                         //allocate from the pool if the threshold;
 					//if (curr_page->avg_cycles > N)
 					if(curr_page->max_cycles < THRESHOLD)
-					//allocate from this pool (all code below?)
+						//allocate from this pool (all code below?)
 					{
 						page_va = pool_alloc(3, page, private, params->vma); //should be OCM
 					}
@@ -580,6 +585,34 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 	return virt_to_page(page_va);
 
 }
+
+static struct page * alloc_pool_pgtble (struct mm_struct *mm)
+{
+	//even do i need to throw mm? bc current already has access
+	void* page_va; // u might ask why void* . bc it depends we need page descriptor
+	//meaning struct page or virt address of the page (this virt addr is from which address
+	//space? kernel? bc it is allocated by genpool
+	//dump_stack();
+	//printk("parameter mm->prof_info :0x%08x) and (current->mm->prof_info = 0x%08x)\n", (unsigned long)mm->prof_info, (unsigned long)(current->mm));
+	  
+	//if (!current || !current->mm || !current->mm->prof_info)
+	//if((mm->prof_info) == NULL)
+	//	return NULL;
+	printk("before if of mem_pool\n");
+	if (!mem_pool[PGTABLE_POOL_ALLOC])
+		return NULL;
+	printk("before gen pool alloc\n");
+	page_va = (void *)gen_pool_alloc(mem_pool[PGTABLE_POOL_ALLOC], PAGE_SIZE);
+	if (!page_va) {
+                pr_err("Unable to allocate page from colored pool.\n");
+		return NULL;
+	}
+
+  	//prefetch_page(page_va);
+	printk("if we are here it means we successfully allocated from our custom pool\n");
+	return virt_to_page(page_va);
+	//return either NULL or page
+}
 	
 
 
@@ -603,8 +636,8 @@ int __my_free_pvtpool_page (struct page * page)
 		page_va = page_to_virt(page);
        
 		if(__addr_in_gen_pool(mem_pool[i], (unsigned long)page_va, PAGE_SIZE)) {
-		  //printk("Dynamic de-allocation for phys page 0x%08llx\n",
-		  //	       page_to_phys(page));
+			//printk("Dynamic de-allocation for phys page 0x%08llx\n",
+			//	       page_to_phys(page));
 
 		
 			if (verbose)
@@ -624,7 +657,29 @@ int __my_free_pvtpool_page (struct page * page)
 
 }
 
+static int free_pool_pgtble(unsigned long page)
+{
+	//fill here
+	if(!current)//why we check current here?bc it is possible all pages are freed and current
+		//is destructed?
+	{
+         	printk("current is NULL!\n");
+		return 1;
+        }
+	//I think page is already virtual address, so unlike the __my_
+	//free_pvtpool_page we don't have page2virt
+	if(__addr_in_gen_pool(mem_pool[PGTABLE_POOL_ALLOC], page, PAGE_SIZE)) {
+		//just for debug purpose:
+		printk("Dynamic de-allocation for phys page of pgtble\n");
+	  
+		gen_pool_free(mem_pool[PGTABLE_POOL_ALLOC],page, PAGE_SIZE);
+	}
 
+		return 0;
+}
+
+
+	
 static int mm_exp_load(void){
 
 	int init;
@@ -641,15 +696,20 @@ static int mm_exp_load(void){
 	/*initialization of memory pools*/
 	init = initializer(ret);
         if (init == 0)
-	  // printk("init is %d\n",init);
-        //printk("after mem_pool initialization\n");
+		printk("init is %d\n",init);
+	//printk("after mem_pool initialization\n");
 
 	//Install handlers (callback function)
 	/* Install handler for pages released by the kernel at task completion 
 	   and for changing page-level cacheability*/
-	free_pvtpool_page = __my_free_pvtpool_page;
-        alloc_pvtpool_page = alloc_pool_page;
+	//i cmnted below now just for testing my pgtble allocation
+	//free_pvtpool_page = __my_free_pvtpool_page;
+	//alloc_pvtpool_page = alloc_pool_page;
 	profile_decomposer = my_profile_decomposer;
+	//Gol
+	//test my hook
+	alloc_pvtpool_pgtble = alloc_pool_pgtble;
+	free_pvtpool_pgtble = free_pool_pgtble;
 
 	//pr_info("KPROFILER module installed successfully.\n");
 
@@ -680,9 +740,11 @@ static void mm_exp_unload(void)
 	}
 
 	//release the handler
-	free_pvtpool_page = NULL;
-	alloc_pvtpool_page = NULL;
+	//free_pvtpool_page = NULL;
+	//alloc_pvtpool_page = NULL;
 	profile_decomposer = NULL;
+	alloc_pvtpool_pgtble = NULL;
+	free_pvtpool_pgtble = NULL;
 
 	//pr_info("KPROFILER module uninstalled successfully.\n");
 }
