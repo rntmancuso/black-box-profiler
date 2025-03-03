@@ -392,7 +392,6 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 	page_va = (void *)gen_pool_alloc(mem_pool, PAGE_SIZE);
 
         DBG_PRINT("POOL: Allocating VA: 0x%08lx\n", (unsigned long)page_va);
-
 	if (!page_va) {
                 pr_err("Unable to allocate page from colored pool.\n");
 		return NULL;
@@ -414,7 +413,6 @@ struct page * alloc_pool_page(struct page * page, unsigned long private)
 int __my_free_pvtpool_page (struct page * page)
 {
  	void * page_va;
-
         if (!mem_pool || !page)
                 return 1;
 
@@ -428,9 +426,7 @@ int __my_free_pvtpool_page (struct page * page)
 	        set_page_count(page, 1);
 		if (verbose)
 			dump_page(page, "pool dealloc debug");
-
                 gen_pool_free(mem_pool, (unsigned long)page_va, PAGE_SIZE);
-
 		--__in_pool;
 
 		DBG_PRINT("POOL: [FREE] Current allocation: %d pages\n", __in_pool);
