@@ -37,6 +37,7 @@
 #include <linux/delay.h> /*for msleep() using as test*/
 #include <linux/cpumask.h>
 #include <linux/random.h>
+#include <linux/cdev.h>
 
 #if LINUX_VERSION_CODE > KERNEL_VERSION(4, 13, 0)
 #  include <linux/sched/types.h>
@@ -103,7 +104,7 @@ static spinlock_t cpu_lock[4]; // one lock per core
 #define ARMV8_PMUSERENR_CR      (1 << 2) /*  Cycle counter read enable */
 #define ARMV8_PMUSERENR_ER      (1 << 3) /*  Event counter read enable */
 ///**PMCNTENSET_EL0 is a control register for the ARMv8 performance monitoring unit (PMU) in EL0**/
-#define ARMV8_PMCNTENSET_EL0_ENABLE ((1<<31)| 1) /* *< Enable Perf count reg and bit0 bc -->continue */
+#define ARMV8_PMCNTENSET_EL0_ENABLE ((1<<31)| 0xF) /* *< Enable Perf count reg and bit0 bc -->continue */
 
 //#define ARMV8_PMCNTENSET_EL1_ENABLE (1 << 31)
 
@@ -127,92 +128,42 @@ static inline void armv8pmu_pmcr_write(u32 val)
 	asm volatile("msr pmcr_el0, %0" : : "r" ((u64)val));
 }
 static void
-enable_cpu_counters(struct activity_info * actInfo, int processor_id)
+setup_cpu_counters(struct activity_info * actInfo)
 {
-	uint32_t r,r0, r1;
-	//struct activity_info * actInfo = (struct activity_info * )data;
-       
-        //DBG_PRINT("enabling user-mode PMU access on CPU #%d",
-	// smp_processor_id());
-
-	//#if __aarch64__
-	asm volatile("mrs %0, pmuserenr_el0" : "=r"(r));
-	//DBG_PRINT("pmuserenr_el0 = %d\n", r);
-
-	/*  Enable user-mode access to counters. */
-	asm volatile("msr pmuserenr_el0, %0" : : "r"((u64)ARMV8_PMUSERENR_EN_EL0|ARMV8_PMUSERENR_ER|ARMV8_PMUSERENR_CR));
-
 	/*  Initialize & Reset PMNC: C and P bits. */
 	armv8pmu_pmcr_write(ARMV8_PMCR_P | ARMV8_PMCR_C);
-	/* G4.4.11
-	 * PMINTENSET, Performance Monitors Interrupt Enable Set register */
-	/* cycle counter overflow interrupt request is disabled */
-	asm volatile("msr pmintenset_el1, %0" : : "r" ((u64)(0 << 31)));
 	/*   Performance Monitors Count Enable Set register bit 30:0 disable, 31 enable
 	     .also enable pmevcntr0. ...,pmevcntr3 */
 	asm volatile("msr pmcntenset_el0, %0" : : "r" (ARMV8_PMCNTENSET_EL0_ENABLE));
-
-
-	/* start*/
-	/*each processor has its own pmu registers*/
-	/* switch(processor_id) { */
-	/* case 0: */
-	/* 	asm volatile("msr pmevtyper0_el0, %0" : : "r" (actInfo->perf_counter)); */
-	/* 	break; */
-	/* case 1: */
-	/* 	asm volatile("msr pmevtyper1_el0, %0" : : "r" (actInfo->perf_counter)); */
-	/* 	break; */
-	/* case 2: */
-	/* 	asm volatile("msr pmevtyper2_el0, %0" : : "r" (actInfo->perf_counter)); */
-	/* 	break; */
-	/* case 3: */
-	/* 	asm volatile("msr pmevtyper3_el0, %0" : : "r" (actInfo->perf_counter)); */
-	/* 	break; */
-	/* default: */
-	/* 	printk("wrong processor number\n"); */
-	/* 	break; */
-	/* } */
-	asm volatile("msr pmevtyper0_el0, %0" : : "r" (actInfo->perf_counter));
-	//asm volatile("msr pmevtyper0_el0, %0" : : "r" EVENT1);
-	//asm volatile("msr pmevtyper0_el0, %0" : : "r" EVENT2);
-	//asm volatile("msr pmevtyper0_el0, %0" : : "r" EVENT3);
+	asm volatile("msr pmevtyper0_el0, %0" : : "r" (actInfo->perf_counter[0]));
+	asm volatile("msr pmevtyper1_el0, %0" : : "r" (actInfo->perf_counter[1]));
+	asm volatile("msr pmevtyper2_el0, %0" : : "r" (actInfo->perf_counter[2]));
+	asm volatile("msr pmevtyper3_el0, %0" : : "r" (actInfo->perf_counter[3]));
 
 	armv8pmu_pmcr_write(armv8pmu_pmcr_read() | ARMV8_PMCR_E);
-
-	asm volatile("mrs %0, pmuserenr_el0" : "=r"(r));
-	//DBG_PRINT("pmuserenr_el0 = %d\n", r);
-
-	// Step 4: Read the PMU counter value
-	/* switch(processor_id) { */
-	/* case 0: */
-	/* { */
-	/* 	asm volatile("mrs %0, pmevcntr0_el0" : "=r" (r0)); */
-	/* 	printk("PMCCNTR_EL0 (initial performance Counter Value): core0 : 0x%lx\n",r0); */
-	/* 	break; */
-	/* } */
-	/* case 1: */
-	/* 	asm volatile("mrs %0, pmevcntr1_el0" : "=r" (r1)); */
-	/* 	printk("PMCCNTR_EL0 (initial performance Counter Value): core1 : 0x%lx\n",r1); */
-	/* 	break; */
-	/* case 2: */
-	/* 	asm volatile("mrs %0, pmevcntr2_el0" : "=r" (r2)); */
-	/* 	printk("PMCCNTR_EL0 (initial performance Counter Value): core3 : 0x%lx\n",r2); */
-	/* 	break; */
-	/* case 3: */
-	/* 	asm volatile("mrs %0, pmevcntr3_el0" : "=r" (r3)); */
-	/* 	printk("PMCCNTR_EL0 (initial performance Counter Value): core0 : 0x%lx\n",r3); */
-	/* 	break; */
-	/* default: */
-	/* 	printk("wrong processor number\n"); */
-	/* 	break; */
-	/* } */
-        
-	//	#else
-	//#error Unsupported Architecture
-	//#endif
-	asm volatile("mrs %0, pmevcntr0_el0" : "=r" (r0));
-	printk("PMCCNTR_EL0 (initial performance Counter Value): core%d : 0x%x\n",processor_id,r0);
 }
+
+static void
+sample_cpu_counters(uint32_t * c1, uint32_t * c2, uint32_t * c3, uint32_t * c4)
+{
+	asm volatile("mrs %0, pmevcntr0_el0" : "=r" (*c1));
+	asm volatile("mrs %0, pmevcntr1_el0" : "=r" (*c2));
+	asm volatile("mrs %0, pmevcntr2_el0" : "=r" (*c3));
+	asm volatile("mrs %0, pmevcntr3_el0" : "=r" (*c4));
+}
+
+static void
+save_cpu_counters(uint32_t * c1, uint32_t * c2, uint32_t * c3, uint32_t * c4,
+		  struct perf_results * results)
+{
+	uint32_t _c1 = 0, _c2 = 0, _c3 = 0, _c4 = 0;
+	sample_cpu_counters(&_c1, &_c2, &_c3, &_c4);
+	results->cnt[0] = _c1 - *c1;
+	results->cnt[1] = _c2 - *c2;
+	results->cnt[2] = _c3 - *c3;
+	results->cnt[3] = _c4 - *c4;
+}
+
 static void
 disable_cpu_counters(void* data)
 {
@@ -384,6 +335,7 @@ int latency_buffer_init(struct activity_info* actInfo)
 	uint64_t next;
 	uint64_t * perm;
 	uint64_t perm_len = actInfo->buffer_size / CACHE_LINE;
+	printk("PERM_LEN IS : %lld\n", perm_len);
 		   
 	/* Allocate an array to keep as many indexes as the number of
 	 * cacheline in the buffer to be initizaliezed*/
@@ -398,7 +350,8 @@ int latency_buffer_init(struct activity_info* actInfo)
 	/* Fill the elements of the permutation buffer */
 	for (i = 0; i < perm_len; ++i)
 	{
-		perm[i] = (i + 1) % perm_len;
+	       perm[i] = i;
+		  //(i + 1) % perm_len;
 	}
 
 	/* Enact permutation on the support buffer first. This loop is
@@ -415,11 +368,16 @@ int latency_buffer_init(struct activity_info* actInfo)
 
 	/* The permutation buffer is good to go. Now apply the
 	 * permutations in the actual buyffer. */
-	actInfo->buffer_va[0] = perm[perm[perm_len -1]];
+	//actInfo->buffer_va[0] = perm[perm[perm_len -1]];
         for (i = 0; i < perm_len - 1; ++i)
 	{
-		actInfo->buffer_va[(i+1)*(CACHE_LINE/sizeof(BUF_TYPE))] = perm[perm[i]];
+	  //actInfo->buffer_va[(i+1)*(CACHE_LINE/sizeof(BUF_TYPE))] = perm[perm[i]];
+	  uint64_t index = perm[i];
+	  uint64_t next = perm[i+1];
+	  actInfo->buffer_va[(index)*(CACHE_LINE/sizeof(BUF_TYPE))] = next;
 	}
+
+	actInfo->buffer_va[(perm[i])*(CACHE_LINE/sizeof(BUF_TYPE))] = perm[0];
 
 #if 0
 	/* Just for debugging, print out the initialized latency buffer */
@@ -475,9 +433,9 @@ static inline void __access_bw_write (BUF_TYPE * r, BUF_TYPE * w, BUF_TYPE * end
 
 static inline void __access_bw_rw (BUF_TYPE * r, BUF_TYPE * w, BUF_TYPE * end)
 {
-       printk(KERN_INFO "__access_bw_rw func at %s:%d\n", __FILE__, __LINE__);
-
-       BUF_TYPE tmp;
+	//printk(KERN_INFO "__access_bw_rw func at %s:%d\n", __FILE__, __LINE__);
+	
+	BUF_TYPE tmp;
 		
 	__asm__ volatile(
 		"%=:               \n\t" 
@@ -497,7 +455,8 @@ static inline void __access_bw_read_nt(BUF_TYPE * r, BUF_TYPE * w, BUF_TYPE * en
 
 	(void)w;
 
-#define __NC_IMPL_DCADD
+	//#define __NC_IMPL_DCADD
+#define __NC_IMPL_DCAFTER
 #if defined __NC_IMPL_DCAFTER
 	__asm__ volatile(
 		"%=:               \n\t" 
@@ -548,7 +507,7 @@ static inline void __access_bw_read_nt_ldnp(BUF_TYPE * r, BUF_TYPE * w, BUF_TYPE
 
 }
 /***********************************TEST NONCACHEABLE WRITE OPERATION***************************/
-static inline void __access_bw_write_nt (BUF_TYPE * r, BUF_TYPE * w, BUF_TYPE * end)
+static inline void __access_bw_write_nstream (BUF_TYPE * r, BUF_TYPE * w, BUF_TYPE * end)
 {
   //printk(KERN_INFO "__access_bw_write_nt func  %s:%d\n", __FILE__, __LINE__);
 
@@ -556,7 +515,7 @@ static inline void __access_bw_write_nt (BUF_TYPE * r, BUF_TYPE * w, BUF_TYPE * 
 
 	//printk("WRITENT\n");
 	
-	__asm__ volatile(
+	    __asm__ volatile(
 		"%=:               \n\t" 
 		"dc zva, %0        \n\t"  // write zero in the memory, this is cosidered are our write
 		"add %0, %0, %3    \n\t"
@@ -566,6 +525,23 @@ static inline void __access_bw_write_nt (BUF_TYPE * r, BUF_TYPE * w, BUF_TYPE * 
 		: "r" (tmp), "r"(end), "I" (BUF_INCR)  // Input operand: address to load from is in r
 		: "memory"
 		);
+}
+
+static inline void __access_bw_write_nt (BUF_TYPE * r, BUF_TYPE * w, BUF_TYPE * end)
+{
+         BUF_TYPE tmp = (BUF_TYPE)w;
+	 
+	 __asm__ volatile(
+		"%=:               \n\t" 
+		"str %1,[%0], %3        \n\t"  // store at the address in w
+	        "dc civac, %0      \n\t"  // Invalidate the next cacheline
+		"cmp %2, %0        \n\t"  // Compare current and end pointers
+		"b.hi %=b          \n\t"  // Loop if end not reached
+		: "+&r" (w)                // Output operand: store the result in tmp
+		: "r" (tmp), "r"(end), "I" (BUF_INCR)  // Input operand: address to load from is in r
+		: "memory"
+		);
+
 
 }
 /*************************************************************************************************/
@@ -574,13 +550,24 @@ static inline void __access_lat_read(BUF_TYPE * r, BUF_TYPE * w, BUF_TYPE * end)
 {
 	BUF_TYPE * cur = &r[(*r) * CACHE_LINE/sizeof(BUF_TYPE)];
 
+	/*printk("BEGINING OF LAT_READ: cur: %p, *r: %lld, *cur: %lld, (*r) * CACHE_LINE/sizeof(BUF_TYPE): %lld\n ",
+	  cur, *r, *cur, (*r) * CACHE_LINE/sizeof(BUF_TYPE));*/
+	//int lat_counter = 0;
 	/* Loop until the pointer we are looking at is the same we
 	 * started from. */
 	while (cur != r)
 	{
 		cur = &r[(*cur) * CACHE_LINE/sizeof(BUF_TYPE)];
+		//lat_counter++;
         		   
 	}
+
+	
+	//printk("LAT_COUNTER : %d\n", lat_counter);
+	/*printk("[LAT_COUNTER] is : %d and *cur is: %lld, cache/sizeof(buff type): %ld, multiplication : %lld \n",
+	       lat_counter, (*cur), CACHE_LINE/sizeof(BUF_TYPE),
+	       (*cur) * CACHE_LINE/sizeof(BUF_TYPE));*/
+	//}
 
 }
 
@@ -695,79 +682,57 @@ static inline void __access_ustress_write (BUF_TYPE * r, BUF_TYPE * w, BUF_TYPE 
 #define ACCESS_BUFFER(start, end, access_type)				\
 	do {								\
 		register BUF_TYPE * __var = start;			\
-		register BUF_TYPE *__end = end;				\
-		__access_##access_type(__var, __var, __end);		\
+		register BUF_TYPE *__end = end;                         \
+	     	__access_##access_type(__var, __var, __end); \
 	} while (0)
 
-#define ACCESS_BUFFER_UNTIL(stop_cond, start, end, access_type)		\
-	while(stop_cond) {						\
-		ACCESS_BUFFER(start, end, access_type);			\
+#define ACCESS_BUFFER_UNTIL(stop_cond, start, end, access_type)	\
+	while(stop_cond) {					\
+		ACCESS_BUFFER(start, end, access_type);		\
 	}
 
-#define ACCESS_BUFFER_REPEAT(repeat, start, end, access_type)		\
-	do {								\
-	        register int __cnt = 0;					\
-		for(; __cnt < repeat; ++__cnt) {			\
-			ACCESS_BUFFER(start, end, access_type);		\
-		}							\
+#define ACCESS_BUFFER_REPEAT(repeat, start, end, access_type)	\
+	do {							\
+	        register int __cnt = 0;				\
+		for(; __cnt < repeat; ++__cnt) {		\
+			ACCESS_BUFFER(start, end, access_type);	\
+		}						\
 	} while (0)
 
-#define ACCESS_BUFFER_NC(start, end, access_type)			\
-	do {								\
-	        register int __cnt = 0;					\
-		for(; __cnt < 1; ++__cnt) {		        	\
-			ACCESS_BUFFER(start, end, access_type);		\
-		}							\
+#define ACCESS_BUFFER_NC(start, end, access_type)		\
+	do {							\
+	        register int __cnt = 0;				\
+		for(; __cnt < 1; ++__cnt) {			\
+			ACCESS_BUFFER(start, end, access_type);	\
+		}						\
 	} while (0)
 
 static void activity_stress(void * params)
 {
-	struct activity_info * actInfo = (struct activity_info * )params;
+	struct activity_params * actParams = (struct activity_params *)params;
+	struct activity_info * actInfo = actParams->act_info;
+	struct experiment_result * expRes = actParams->exp_res;
 	BUF_TYPE * buf_start;
 	unsigned long flags;
 	unsigned long local_id;
-	uint32_t r0,r1;
-
+	uint32_t c1,c2,c3,c4;
+	struct perf_results * cnts;
+	
 	/* Get local ID */
-	local_id = atomic_inc_return(&g_stressor_id);
+	local_id = atomic_inc_return(&g_stressor_id) -1;
+	cnts = &expRes->interf_cnt[local_id];
 	buf_start = actInfo->buffer_va + ((local_id) * actInfo->buffer_size/sizeof(BUF_TYPE));
 
 	local_irq_save(flags);
-	//rcu_read_lock_sched();
 
 	get_cpu();
 
+	// Signal begin of activity
 	spin_unlock(&cpu_lock[smp_processor_id()]);
-	printk("TEST actInfo->perf_counter = %x", actInfo->perf_counter);
-	if (actInfo->perf_counter != 0)
-	{
-		enable_cpu_counters(actInfo,smp_processor_id());
 
-		/* switch(smp_processor_id()) { */
-		/* case 0: */
-		/* 	asm volatile("mrs %0, pmevcntr0_el0" : : "r" (r0)); */
-		/* 	break; */
-		/* case 1: */
-		/* 	asm volatile("mrs %0, pmevcntr1_el0" : : "r" (r1)); */
-		/* 	break; */
-		/* case 2: */
-		/* 	asm volatile("mrs %0, pmevcntr2_el0" : : "r" (r2)); */
-		/* 	break; */
-		/* case 3: */
-		/* 	asm volatile("mrs %0, pmevcntr3_el0" : : "r" (r3)); */
-		/* 	break; */
-		/* default: */
-		/* 	printk("wrong processor number\n"); */
-		/* 	break; */
-		/* } */
-		
-		asm volatile("mrs %0, pmevcntr0_el0" : "=r" (r0));
-		
-	}
-	printk("STRESS - START for core %d\n", smp_processor_id());
+	setup_cpu_counters(actInfo);
+	sample_cpu_counters(&c1, &c2, &c3, &c4);
 
-	 
-	
 	switch (actInfo->access_type) {
 	case ACCESS_BW_READ:
 		ACCESS_BUFFER_UNTIL(g_exp_running, buf_start,
@@ -794,61 +759,30 @@ static void activity_stress(void * params)
 				    buf_start + actInfo->buffer_size/sizeof(BUF_TYPE),
 				    bw_write_nt);
 		break;
+	case ACCESS_BW_WRITE_NSTREAM:
+	        ACCESS_BUFFER_UNTIL(g_exp_running, buf_start,
+				    buf_start + actInfo->buffer_size/sizeof(BUF_TYPE),
+				    bw_write_nstream);
+		break;
+
 	case ACCESS_BW_RW_NT:
 	case ACCESS_LATENCY:
 	        ACCESS_BUFFER_REPEAT(g_exp_running, buf_start,
-					     buf_start + actInfo->buffer_size/sizeof(BUF_TYPE),
+				     buf_start + actInfo->buffer_size/sizeof(BUF_TYPE),
 					     lat_read);
-			break;
+		break;
 	case ACCESS_LATENCY_NT:
 	        ACCESS_BUFFER_REPEAT(g_exp_running, buf_start,
 					     buf_start + actInfo->buffer_size/sizeof(BUF_TYPE),
 					     lat_read_nt);
-			break;
+		break;
 	  
 	default:
 		break;		
 	};
+	save_cpu_counters(&c1, &c2, &c3, &c4, cnts);
 
-	if (actInfo->perf_counter != 0)
-	{
-		//enable_cpu_counters(actInfo,smp_processor_id());
-
-		/* switch(smp_processor_id()) { */
-		/* case 0: */
-		/* {       asm volatile("mrs %0, pmevcntr0_el0" : : "r" (r4)); */
-		/* 	printk("core 0 counter = %ld\n", r4-r0); */
-		/* 	break; */
-		/* } */
-		/* case 1: */
-		/* { */
-		/* 	asm volatile("mrs %0, pmevcntr1_el0" : : "r" (r5)); */
-		/* 	printk("core 1 counter = %ld\n", r5-r1); */
-		/* 	break; */
-		/* } */
-		/* case 2: */
-		/* { */
-		/* 	asm volatile("mrs %0, pmevcntr2_el0" : : "r" (r6)); */
-		/* 	printk("core 2 counter = %ld\n", r6-r2); */
-		/* 	break; */
-		/* } */
-		/* case 3: */
-		/* { */
-		/* 	asm volatile("mrs %0, pmevcntr3_el0" : : "r" (r7)); */
-		/* 	printk("core 3 counter = %ld\n", r7-r3); */
-		/* 	break; */
-		/* } */
-		/* default: */
-		/* 	printk("wrong processor number\n"); */
-		/* 	break; */
-		/* } */
-		
-	        asm volatile("mrs %0, pmevcntr0_el0" : "=r" (r1));
-		printk("CORE %d perf_count sampling = %d\n", smp_processor_id(), r1-r0);
-	}
-
-	//asm volatile("mrs %0, pmevcntr0_el0" : "=r" (r2));
-		
+	// Signal end of activity
 	spin_unlock(&cpu_lock[smp_processor_id()]);
 
         put_cpu();
@@ -860,86 +794,37 @@ static void activity_stress(void * params)
 
 static void activity_idle(void* params)
 {
-	unsigned long flags;
-	struct activity_info * actInfo = (struct activity_info * )params;
-	uint32_t r0,r1;
-	
+	unsigned long flags, local_id;
+	struct activity_params * actParams = (struct activity_params *)params;
+	struct activity_info * actInfo = actParams->act_info;
+	struct experiment_result * expRes = actParams->exp_res;
+	uint32_t c1,c2,c3,c4;
+	struct perf_results * cnts;
+
+	local_id = atomic_inc_return(&g_stressor_id) -1;
+	cnts = &expRes->interf_cnt[local_id];
+
 	local_irq_save(flags);
 	//rcu_read_lock_sched();
 		
 	get_cpu();
-	spin_unlock(&cpu_lock[smp_processor_id()]);
-	if (actInfo->perf_counter != 0)
-	{
-		enable_cpu_counters(actInfo,smp_processor_id());
 
-		/* switch(smp_processor_id()) { */
-		/* case 0: */
-		/* 	asm volatile("mrs %0, pmevcntr0_el0" : : "r" (r0)); */
-		/* 	break; */
-		/* case 1: */
-		/* 	asm volatile("mrs %0, pmevcntr1_el0" : : "r" (r1)); */
-		/* 	break; */
-		/* case 2: */
-		/* 	asm volatile("mrs %0, pmevcntr2_el0" : : "r" (r2)); */
-		/* 	break; */
-		/* case 3: */
-		/* 	asm volatile("mrs %0, pmevcntr3_el0" : : "r" (r3)); */
-		/* 	break; */
-		/* default: */
-		/* 	printk("wrong processor number\n"); */
-		/* 	break; */
-		/* } */
-		
-		asm volatile("mrs %0, pmevcntr0_el0" : "=r" (r0));
-	}
-	
-	printk("IDLE - START core id : %d\n",smp_processor_id());
+	// Setup and acquire initial value of perf counters
+	setup_cpu_counters(actInfo);
+	sample_cpu_counters(&c1, &c2, &c3, &c4);
+
+	// Signal that we have begun activity
+	spin_unlock(&cpu_lock[smp_processor_id()]);
 	
 	/* CPU-bound busy loop */
 	while (g_exp_running);
-  
-	//asm volatile("mrs %0, pmevcntr0_el0" : "=r" (r2));
-	if (actInfo->perf_counter != 0)
-	{
-		//enable_cpu_counters(actInfo,smp_processor_id());
 
-		/* switch(smp_processor_id()) { */
-		/* case 0: */
-		/* {       asm volatile("mrs %0, pmevcntr0_el0" : : "r" (r4)); */
-		/* 		printk("IDLE core 0 sampling = %ld\n", r4-r0); */
-		/* 		break; */
-		/* } */
-		/* case 1: */
-		/* { */
-		/* 	asm volatile("mrs %0, pmevcntr1_el0" : : "r" (r5)); */
-		/* 	printk("IDLE core 1 sampling = %ld\n", r5-r1); */
-		/* 	break; */
-		/* } */
-		/* case 2: */
-		/* { */
-		/* 	asm volatile("mrs %0, pmevcntr2_el0" : : "r" (r6)); */
-		/* 	printk("IDLE core 2 sampling = %ld\n", r6-r2); */
-		/* 	break; */
-		/* } */
-		/* case 3: */
-		/* { */
-		/* 	asm volatile("mrs %0, pmevcntr3_el0" : : "r" (r7)); */
-		/* 	printk("IDLE core 3 sampling = %ld\n", r7-r3); */
-		/* 	break; */
-		/* } */
-		/* default: */
-		/* 	printk("wrong processor number\n"); */
-		/* 	break; */
-		/* } */
-		
-	        
-	        asm volatile("mrs %0, pmevcntr0_el0" : "=r" (r1));
-		printk("IDLE core %d sampling = %d\n", smp_processor_id(), r1-r0);
-	}
-
+	// Signal that we are done with actitivty
 	spin_unlock(&cpu_lock[smp_processor_id()]);
 
+	// Acquire final value of perf counters and store result of difference
+	save_cpu_counters(&c1, &c2, &c3, &c4, cnts);
+	
 	put_cpu();
 
 	local_irq_restore(flags);
@@ -949,8 +834,7 @@ static void activity_idle(void* params)
 
 int alloc_init_buffers (struct experiment_info * expInfo)
 {
-        printk(KERN_INFO "alloc_init_buffers func at %s:%d\n", __FILE__, __LINE__);
-	unsigned int cpus;
+	unsigned int cpus, i;
 
 	/* Retrieve the configuration for the activity to time on the
 	 * observed core */
@@ -962,7 +846,7 @@ int alloc_init_buffers (struct experiment_info * expInfo)
 	if (actInfo->buffer_va || interf_actInfo->buffer_va) {
 		pr_err(PREFIX "Experiment ABORTED -- non-zero buffer pointers before init.\n");
 		return -1;
-	}
+		}
 
 	if (actInfo->map_type == MAP_NCACHE || interf_actInfo->map_type == MAP_NCACHE) {
 		pr_err(PREFIX "Experiment ABORTED -- MAP_NCACHE not supported yet.\n");
@@ -996,18 +880,27 @@ int alloc_init_buffers (struct experiment_info * expInfo)
 			return -1;
 		}
 	}
-
 		
 	/* Finally allocate memory to record the results of the experiment */
 	expInfo->results = (struct experiment_result *)kmalloc(cpus * sizeof(struct experiment_result),
 							       GFP_KERNEL);
+	// Allocate perf counter results for all the cores
+	for (i = 0; i < cpus; ++i) {
+		/* Allocate buffers to hold the result of perf samples from interfering cores */
+		expInfo->results[i].interf_cnt = (struct perf_results *)kmalloc((cpus-1) * sizeof(struct perf_results), GFP_KERNEL);		
+	}
 	
 	return 0;		
 }
 
 void dealloc_results(struct experiment_info * expInfo)
 {
+	unsigned int cpus =  num_online_cpus();
+
 	if (expInfo->results) {
+		while (cpus--) {
+			kfree(expInfo->results[cpus].interf_cnt);
+		}
 		kfree(expInfo->results);
 		expInfo->results = NULL;
 	}
@@ -1024,13 +917,14 @@ void dealloc_buffers(struct experiment_info * expInfo)
 	struct activity_info * interf_actInfo = &expInfo->interf_info;
 
 	cpus = num_online_cpus();
-		
+	printk("in dealloc_buffers 1\n");
+	
 	if (actInfo->buffer_va) {
 		gen_pool_free(actInfo->pool->alloc_pool,
 			      (unsigned long)actInfo->buffer_va, actInfo->buffer_size);
 		actInfo->buffer_va = NULL;
 	}
-	
+	printk("in dalloc_buffers 2\n");
 	if (interf_actInfo->buffer_va) {
 		gen_pool_free(interf_actInfo->pool->alloc_pool,
 			      (unsigned long)interf_actInfo->buffer_va,
@@ -1121,7 +1015,6 @@ static void __prepare_activity_masks(struct cpumask * idle_cores_mask,
 				     int idle_cores_count, int active_cores_count,
 				     int local_core)
 {
-        printk(KERN_INFO "__prepare_activity_masks func at %s:%d\n", __FILE__, __LINE__);
 	int cpus = idle_cores_count + active_cores_count + 1;
 	int idle_cores = 0, active_cores = 0;
 	int c;
@@ -1183,7 +1076,7 @@ void run_experiment (struct experiment_info * expInfo)
 	int local_core;
 	struct cpumask idle_cores, active_cores;
 	int repeat = DEFAULT_ITER;
-	uint32_t r1,r2;
+	uint32_t c1,c2,c3,c4;
 	
 	/* Retrieve the configuration for the activity to time on the
 	 * observed core */
@@ -1219,6 +1112,10 @@ void run_experiment (struct experiment_info * expInfo)
 	{
 		/* Init statistics */
 		struct experiment_result * result = &expInfo->results[i];
+		struct activity_params interf_actParams = {
+			.act_info = interf_actInfo,
+			.exp_res = result
+		};
 		result->interf_cpus = i;
 
 		/* Prepare the masks of cores that need to remain idle vs. activated at this iteration. */
@@ -1229,8 +1126,8 @@ void run_experiment (struct experiment_info * expInfo)
 		atomic_set(&g_stressor_id, 0);
 		//local_irq_save(flags);
 		/*starting remote activities*/
-		on_each_cpu_mask(&idle_cores, activity_idle,/*NULL*/interf_actInfo, false);
-	        on_each_cpu_mask(&active_cores, activity_stress, interf_actInfo, false);
+		on_each_cpu_mask(&idle_cores, activity_idle, &interf_actParams, false);
+	        on_each_cpu_mask(&active_cores, activity_stress, &interf_actParams, false);
 		printk("BEFORE the c loop for setting spinlock\n");
 		/* This way for all locks corresponding to all remote
 		  cores we are trying to grab the lock. spin_lock
@@ -1254,6 +1151,7 @@ void run_experiment (struct experiment_info * expInfo)
 		switch(actInfo->access_type) {
 		case ACCESS_BW_READ_NT:
 		case ACCESS_BW_WRITE_NT:
+		case ACCESS_BW_WRITE_NSTREAM:
 		case ACCESS_BW_RW_NT:
 		case ACCESS_LATENCY_NT:
 		        ACCESS_BUFFER_NC(actInfo->buffer_va,
@@ -1267,12 +1165,8 @@ void run_experiment (struct experiment_info * expInfo)
 		//here was main place of irq save?
 		local_irq_save(flags);
 		//rcu_read_lock_sched();
-		if(actInfo->perf_counter)
-		  {
-			  enable_cpu_counters(actInfo,smp_processor_id());
-		  }
-		//start sampling the L2 data refill
-		asm volatile("mrs %0, pmevcntr0_el0" : "=r" (r1));
+		setup_cpu_counters(actInfo);
+		sample_cpu_counters(&c1, &c2, &c3, &c4);		
 		
 		/*beginning of time mesurment*/
 		result->exp_start = ktime_get_ns();
@@ -1307,6 +1201,11 @@ void run_experiment (struct experiment_info * expInfo)
 					     actInfo->buffer_va + actInfo->buffer_size/sizeof(BUF_TYPE),
 					     bw_write_nt);
 			break;
+		case ACCESS_BW_WRITE_NSTREAM:
+		  	ACCESS_BUFFER_REPEAT(repeat, actInfo->buffer_va,
+					     actInfo->buffer_va + actInfo->buffer_size/sizeof(BUF_TYPE),
+					     bw_write_nstream);
+			break;
 		case ACCESS_BW_RW_NT:
 			break;
 		case ACCESS_LATENCY:
@@ -1325,9 +1224,8 @@ void run_experiment (struct experiment_info * expInfo)
 
 		result->exp_end = ktime_get_ns();
 
-		//end sampling L2 data refill
-		asm volatile("mrs %0, pmevcntr0_el0" : "=r" (r2));
-	      
+		// Acquire final value of perf counters and store result of difference
+		save_cpu_counters(&c1, &c2, &c3, &c4, &result->obs_cnt);
 		
 		local_irq_restore(flags);
 		//rcu_read_unlock_sched();
@@ -1353,19 +1251,21 @@ void run_experiment (struct experiment_info * expInfo)
 		    actInfo->access_type == ACCESS_BW_READ_NT ||
 		    actInfo->access_type == ACCESS_BW_WRITE_NT ||
 		    actInfo->access_type == ACCESS_BW_RW_NT ||
-		    actInfo->access_type == ACCESS_LATENCY) {
+		    actInfo->access_type == ACCESS_LATENCY ||
+		    actInfo->access_type == ACCESS_LATENCY_NT) {
 			result->bytes_r = actInfo->buffer_size * repeat;
 		}
 
 		if (actInfo->access_type == ACCESS_BW_WRITE ||
 		    actInfo->access_type == ACCESS_BW_RW ||
 		    actInfo->access_type == ACCESS_BW_WRITE_NT ||
+		    actInfo->access_type == ACCESS_BW_WRITE_NSTREAM ||
 		    actInfo->access_type == ACCESS_BW_RW_NT) {
 			result->bytes_w = actInfo->buffer_size * repeat;
 		} else {
 			result->bytes_w = 0;
 		}
-		printk("CORE OBSV %d SAMPLING = %d\n", smp_processor_id(),r2-r1);
+
 		pr_info(PREFIX "Experiment Completed with %ld interfering cores.\n", i);
 	} /* end of main loop */
 
@@ -1373,6 +1273,31 @@ void run_experiment (struct experiment_info * expInfo)
 
 	/* Make sure to deallocate the buffers on the way out. */
 	dealloc_buffers(expInfo);	
+}
+
+static void deallocate_pools(void) {
+	int i;
+	
+	/* destroy genalloc memory pool */
+	for (i = 0; i < g_pools_count; i++)
+	{
+		struct mem_pool *pool = &g_pools[i];
+		if (pool->alloc_pool){
+			pr_info(PREFIX "Destroying gen_pool %d\n", i);
+	                gen_pool_destroy(pool->alloc_pool);
+		}
+
+		if (pool->pool_kva) {
+			pr_info(PREFIX "Unmapping pool %d\n", i);
+			memunmap((void *)pool->pool_kva);
+		}
+	}
+
+	/* Free any memory taken by pool descriptors */
+	if (g_pools_count) {
+		kfree(g_pools);
+		g_pools = NULL;
+	}	
 }
 
 static int __init mm_exp_load(void) {
@@ -1405,6 +1330,14 @@ static int __init mm_exp_load(void) {
 		return -EINVAL;
 	}
 
+	res = initialize_user_pools();
+	if (res < 0) {
+		err_debugfs_interface_exit();
+		deallocate_pools();
+		pr_err(PREFIX "ERROR: Unable to correctly initialize user memory pools.\n");
+		return -EINVAL;
+	}
+	
 	//init_cpu_counters();
 	
 	pr_info(PREFIX "===== success =====.\n\n");
@@ -1415,34 +1348,17 @@ static int __init mm_exp_load(void) {
 
 static void __exit mm_exp_unload(void)
 {
-	int i;
-
 	printk(PREFIX "===== Removing Memory Benchmarking Module =====\n");
 
 	/* Destroy debufs interface */
 	debugfs_interface_exit();
+
+	/* Exit user-side pools */
+	exit_user_pools();
 	
-	/* destroy genalloc memory pool */
-	for (i = 0; i < g_pools_count; i++)
-	{
-		struct mem_pool *pool = &g_pools[i];
-		if (pool->alloc_pool){
-			pr_info(PREFIX "Destroying gen_pool %d\n", i);
-	                gen_pool_destroy(pool->alloc_pool);
-		}
-
-		if (pool->pool_kva) {
-			pr_info(PREFIX "Unmapping pool %d\n", i);
-			memunmap((void *)pool->pool_kva);
-		}
-	}
-
-	/* Free any memory taken by pool descriptors */
-	if (g_pools_count) {
-		kfree(g_pools);
-		g_pools = NULL;
-	}
-
+	/* Deallocate kernel-side pools */
+	deallocate_pools();
+	
 	reset_cpu_counters();
 
 	//cache_monitor_exit();
