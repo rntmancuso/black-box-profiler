@@ -1,0 +1,16 @@
+Modified surce-tree of SD-VBS benchmarks to test the BU BlackBox Profiler.
+The following changes compared to the original tree have been performed:
+
+1. Main computation payload functions have been aggregated within a single function;
+
+2. The symbol name of the main payload function is reported in the corresponding prof_symbol.txt file;
+
+3. Compilation flag -static has been added as a default for all the benchmarks;
+
+4. Alternative inputs have been added for benchmarks disparity, mser, stitch, and tracking.
+
+
+Please refer to SD-VBS.pdf or SD-VBS.doc for information about the original SD-VBS benchmarks.
+
+Report bugs to sdvbs-users@cs.ucsd.edu
+Report bugs about the profiler or any problem with profiling the benchmarks to golsana@bu.edu
