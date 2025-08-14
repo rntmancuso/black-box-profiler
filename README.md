@@ -1,15 +1,25 @@
 
-MemScope : : Open-Source Kernel-Level Framework for Heterogeneous Memory Characterization
+
+
+# BU MemScope : Open-Source Kernel-Level Framework for Heterogeneous Memory Characterization
+
+
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](#)  
+[![Build Status](https://img.shields.io/badge/build-pending-yellow.svg)](#)
+
+## Overview
+MemScope is a tool to analyze and characterize the temporal behavior of memory subsystems, including heterogeneous memories. It helps designersevaluate performance, identify corner cases, and guide memory-aware application optimization.
+ This repository contains all kernel modules necessary for instantiating the BU MemScope.
+
+## Repository Contents
+- `kernel_module/memory_benchmarking.c` – MemScope source code
+- `kernel_module/memory_benchmarking.h` – MemScope header file
+- `kernel_module/memory_benchmarking_interf.c` – MemScope user-interface source code
+- `Makefile` – Build scripts
 
 
 
-
-
-
-
-
-# BU Black-box Profiler
-
+<!--
 This repository contains the user and kernel code, and the kernel
 patches to instantiate the BU black-box cache profiler.
 
@@ -295,3 +305,4 @@ In any cases above if you use `-p`, you can test the profiler without (interacti
 ### Jailhouse Compilation and Deployment
 
 *Coming Soon*
+-->
