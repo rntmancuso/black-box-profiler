@@ -1,3 +1,13 @@
+
+MemScope : : Open-Source Kernel-Level Framework for Heterogeneous Memory Characterization
+
+
+
+
+
+
+
+
 # BU Black-box Profiler
 
 This repository contains the user and kernel code, and the kernel
