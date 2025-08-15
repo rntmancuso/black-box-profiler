@@ -160,7 +160,7 @@ MemScope provides a console-based interface through the debug filesystem with th
 
         Use `echo` to write a space-separated string of event IDs. The firs shows the event ID that should be sampled for all counters of the **core under observation** and the second number the event that should be counted by rest of the              cores (**interfering cores**). In ZCU102 four performance counters can active simultaneously for each core. 
         ```bash
-        echo "4 3" > /sys/kernel/debug/membench/perfcount
+        echo "4 4 4 4 3 3 3 3" > /sys/kernel/debug/membench/perfcount
         ```
 
         **2. Viewing the Current Configuration**
@@ -169,7 +169,7 @@ MemScope provides a console-based interface through the debug filesystem with th
         ```bash
         cat /sys/kernel/debug/membench/perfcount
         ```
-        The output will show the counters for the observed core and the interfering cores.
+        The output will show the four counters for the observed core and four counters of all the interfering cores.
         ```text
         Selected Performance Counters:
         	 Core under observation:      4,      4,      4,      4
@@ -199,5 +199,83 @@ Example of using RT-bench workload with the upool feature:
 
 
 ---
+## Example: Running a Test Experiment with MemScope
 
+1.  After **cross-compiling** the project, load the `membench.ko` kernel module onto the target platform (in this case, a ZCU 102 board). First, configure the experiment by writing to the `debugfs` interface:
 
+    ```bash
+    echo "c r 131072 2 c r 131072 3" > /sys/kernel/debug/membench/experiment
+    ```
+
+    Next, verify that the experiment was set correctly by reading from the same file:
+
+    ```bash
+    cat /sys/kernel/debug/membench/experiment
+    ```
+
+    The output will look similar to this:
+
+    ```text
+    === Current Experiment ===
+    OBSERVED:
+    	 Map Type: MAP_CACHE
+    	 Access Type: ACCESS_BW_READ
+    	 Buffer Size: 0x00020000
+    	 Pool ID: 2
+    INTERFERENCE:
+    	 Map Type: MAP_CACHE
+    	 Access Type: ACCESS_BW_READ
+    	 Buffer Size: 0x00020000
+    	 Pool ID: 3
+    
+    USAGE: Provide new experiment definition with format:
+    <OBS map type: c/n> <OBS access type: r/w/b/s/x/c/l/m> <OBS buffer size> <OBS pool ID> <INT map type: c/n> <INT access type: r/w/b/s/x/c/l/m> <INT buffer size> <INT pool ID>
+    ==========================
+    ```
+
+2.  Configure the performance counters for the experiment. In this example, we monitor `L1D_CACHE_ACCESS` (event `4`) for the core under observation and `MEM_ACCESS` (event `13`) for the interfering cores.
+
+    ```bash
+    echo "13 13 13 13 4 4 4 4" > /sys/kernel/debug/membench/perfcount
+    ```
+
+3.  Start the experiment with the `start` command:
+
+    ```bash
+    echo -n "start" > /sys/kernel/debug/membench/cmd
+    ```
+
+4.  Finally, display the results:
+
+    ```bash
+    cat /sys/kernel/debug/membench/results
+    ```
+
+    The output will look similar to this:
+
+    ```text
+    == Displaying results information ==
+    === Current Experiment ===
+    OBSERVED:
+    	 Map Type: MAP_CACHE
+    	 Access Type: ACCESS_BW_READ
+    	 Buffer Size: 0x00020000
+    	 Pool ID: 2
+    INTERFERENCE:
+    	 Map Type: MAP_CACHE
+    	 Access Type: ACCESS_BW_READ
+    	 Buffer Size: 0x00020000
+    	 Pool ID: 3
+    
+    USAGE: Provide new experiment definition with format:
+    <OBS map type: c/n> <OBS access type: r/w/b/s/x/c/l/m> <OBS buffer size> <OBS pool ID> <INT map type: c/n> <INT access type: r/w/b/s/x/c/l/m> <INT buffer size> <INT pool ID>
+    ==========================
+    RESULTS:
+    Active Cores: 0; Start (ns): 41767162693683; End (ns): 41767169428336; Diff (ns): 6734653; Bytes R: 65536000; Bytes W: 0; Perf.Obs: 4=1025054, 3=123513, 13=1025054, 13=1025053; Perf.Interf[0]: 4=21839120, 4=21839121, 4=21839121, 4=21839121; Perf.Interf[1]: 4=21815392, 4=21815393, 4=21815393, 4=21815393; Perf.Interf[2]: 4=21807470, 4=21807471, 4=21807471, 4=21807471; 
+    Active Cores: 1; Start (ns): 41767348312289; End
+
+5.  In case of using upool with RT-Bench:
+
+    ```bash
+    ./bandwidth -H /dev/upool2 -m 4M -t60 -l2  -c2 -b "-i500 -aread -m2000"
+    ```
