@@ -39,7 +39,8 @@ Build MemScope using the provided `Makefile`:
 make 
 
 ```
-It should be noted that we first cross-compiled, as described, using the provided Makefile with the path to the custom kernel we checked out from the *linux-xlnx-prof* repository: [https://github.com/rntmancuso/linux-xlnx-prof](https://github.com/rntmancuso/linux-xlnx-prof). Using a custom DTB consistent with our memory apertures, we then cross-compiled it based on the *BBProf* repository README [https://github.com/rntmancuso/black-box-profiler] and booted it on our ZCU102 platform. Finally, we inserted the `membench.ko` kernel module into our board using:
+It should be noted that we first cross-compiled, as described, using the provided Makefile with the path to the custom kernel we checked out from the *linux-xlnx-prof* repository: [https://github.com/rntmancuso/linux-xlnx-prof](https://github.com/rntmancuso/linux-xlnx-prof). Using a custom DTB consistent with our memory apertures, we then cross-compiled it based on the *BBProf* repository README [https://github.com/rntmancuso/black-box-profiler](https://github.com/rntmancuso/black-box-profiler)
+ and booted it on our ZCU102 platform. Finally, we inserted the `membench.ko` kernel module into our board using:
 
 ```bash
 insmod membench.ko
@@ -185,5 +186,18 @@ MemScope provides a console-based interface through the debug filesystem with th
         * Number of bytes read or written
         * Samples of selected performance counters
 
+
+<br><br>
+**Extended Memory pools to the User-Space : Upool**
+  * This UI extension allows arbitrary user applications to access memory pools by mapping their allocation policies to these pools via *mmap*, enabling direct allocation and deallocation. We used this feature alongside test-benches from RT-bench [https://gitlab.com/rt-bench/rt-bench](https://gitlab.com/rt-bench/rt-bench) .
+
+Example of using RT-bench workload with the upool feature:
+ ```bash
+./mser -t 1 -l4 -H /dev/upool2 -m 1M  -b .
+ ```
+`./mser` — Benchmark from the Vision suite of RT-bench.  **`-H`**: Determines the location of the heap. For `upooli`, this is `/dev/upooli`.  **Upools**: The number of upools matches the number of pools mentioned above. For example, `upool2` is PS-side DRAM.
+
+
+---
 
 
