@@ -27,6 +27,31 @@ This repository contains all the kernel modules necessary for instantiating BU M
 
 *Details on the required DTB configuration will be added here.*
 
+```dts
+ocm@fffc0000 {
+    device_type = "memory";
+    compatible = "genpool";
+    reg = <0x0 0xfffc0000 0x0 0x40000>;
+};
+
+bram@a0000000 {
+    device_type = "memory";
+    compatible = "genpool";
+    reg = <0x0 0xa0000000 0x0 0x100000>;
+};
+
+dram@10000000 {
+    device_type = "memory";
+    compatible = "genpool";
+    reg = <0x0 0x10000000 0x0 0x10000000>;
+};
+
+mig@500000000 {
+    device_type = "memory";
+    compatible = "genpool";
+    reg = <0x5 0x00000000 0x0 0x10000000>;
+};
+```
 ---
 
 ## Compilation and Module Insertion
