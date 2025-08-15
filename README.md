@@ -25,7 +25,7 @@ This repository contains all the kernel modules necessary for instantiating BU M
 
 ## Device Tree Blob (DTB)
 
-*Details on the required DTB configuration will be added here.*
+Modified part of our DTB file for incorporating heterogeneous memory types:
 
 ```dts
 ocm@fffc0000 {
