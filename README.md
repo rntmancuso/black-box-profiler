@@ -266,16 +266,19 @@ Example of using RT-bench workload with the upool feature:
     	 Access Type: ACCESS_BW_READ
     	 Buffer Size: 0x00020000
     	 Pool ID: 3
-    
+
     USAGE: Provide new experiment definition with format:
     <OBS map type: c/n> <OBS access type: r/w/b/s/x/c/l/m> <OBS buffer size> <OBS pool ID> <INT map type: c/n> <INT access type: r/w/b/s/x/c/l/m> <INT buffer size> <INT pool ID>
     ==========================
     RESULTS:
     Active Cores: 0; Start (ns): 41767162693683; End (ns): 41767169428336; Diff (ns): 6734653; Bytes R: 65536000; Bytes W: 0; Perf.Obs: 4=1025054, 3=123513, 13=1025054, 13=1025053; Perf.Interf[0]: 4=21839120, 4=21839121, 4=21839121, 4=21839121; Perf.Interf[1]: 4=21815392, 4=21815393, 4=21815393, 4=21815393; Perf.Interf[2]: 4=21807470, 4=21807471, 4=21807471, 4=21807471; 
-    Active Cores: 1; Start (ns): 41767348312289; End
+    Active Cores: 1; Start (ns): 41767348312289; End (ns): 41767358352082; Diff (ns): 10039793; Bytes R: 65536000; Bytes W: 0; Perf.Obs: 4=1025054, 3=67623, 13=1025054, 13=1025053; Perf.Interf[0]: 4=23826242, 4=23826243, 4=23826243, 4=23826243; Perf.Interf[1]: 4=5508580, 4=5508580, 4=5508580, 4=5508580; Perf.Interf[2]: 4=23793902, 4=23793903, 4=23793903, 4=23793903; 
+    Active Cores: 2; Start (ns): 41767536358338; End (ns): 41767551139345; Diff (ns): 14781007; Bytes R: 65536000; Bytes W: 0; Perf.Obs: 4=1025054, 3=58053, 13=1025054, 13=1025053; Perf.Interf[0]: 4=26680711, 4=26680712, 4=26680712, 4=26680712; Perf.Interf[1]: 4=4042773, 4=4042773, 4=4042773, 4=4042773; Perf.Interf[2]: 4=3999719, 4=3999719, 4=3999719, 4=3999719; 
+    Active Cores: 3; Start (ns): 41767716313189; End (ns): 41767736867793; Diff (ns): 20554604; Bytes R: 65536000; Bytes W: 0; Perf.Obs: 4=1025054, 3=56559, 13=1025054, 13=1025053; Perf.Interf[0]: 4=3089479, 4=3089479, 4=3089479, 4=3089479; Perf.Interf[1]: 4=3081287, 4=3081287, 4=3081287, 4=3081287; Perf.Interf[2]: 4=3017732, 4=3017732, 4=3017732, 4=3017732; 
+    ```
 
-5.  In case of using upool with RT-Bench:
+5.  Optionally, if you are using `upool` with `RT-Bench`, run a command similar to the following:
 
     ```bash
-    ./bandwidth -H /dev/upool2 -m 4M -t60 -l2  -c2 -b "-i500 -aread -m2000"
+    ./bandwidth -H /dev/upool2 -m 4M -t60 -l2 -c2 -b "-i500 -aread -m2000"
     ```
