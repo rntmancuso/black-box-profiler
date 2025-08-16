@@ -1,11 +1,8 @@
 obj-m += membench.o
-#aarch64_kmod-objs = aarch64_kprofiler.o cache_ops.o  
-#mem_profiler-objs = memory_profiler.o
+
 latency_kmod-objs = memory_benchmarking.o
 membench-objs = memory_benchmarking.o memory_benchmarking_interf.o
-#blackbox_prof-objs = blackbox_profiler.o cache_ops.o
 
-#aarch64_kmod-objs = aarch64_kprofiler.o cache_ops.o
 
 export CROSS_COMPILE:=aarch64-linux-gnu-
 export ARCH:=arm64
