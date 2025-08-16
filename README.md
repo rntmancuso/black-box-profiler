@@ -171,7 +171,7 @@ MemScope provides a console-based interface through the debug filesystem with th
         	Ready: Y
 
         ==========================
-        ```    * Displays the existing memory pools and their current status.
+        ```   
  
 
 * **`perfcount`**
