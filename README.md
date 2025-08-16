@@ -95,9 +95,7 @@ MemScope provides a console-based interface through the debug filesystem with th
             | `y`            | Non-cacheable write-streaming to the memory (no write-allocate).          |
 
         * **Buffer Size**: The size of the memory buffer in bytes.
-        * **Memory Pool**: The target memory pool ID. MemScope uses the following mapping: `0` – OCM, `1` – BRAM, `2` – PS-side DRAM, `3` – PL-side DRAM.
 
-        * **Buffer Size**: The size of the memory buffer in bytes.
         * **Memory Pool**: The target memory pool ID for the experiment. MemScope uses the following mapping: `0` – OCM, `1` – BRAM, `2` – PS-side DRAM, `3` – PL-side DRAM.
 
     * **Example:**
@@ -119,7 +117,7 @@ MemScope provides a console-based interface through the debug filesystem with th
             -   `3`: Target memory pool **3**.
 
 * **`cmd`**
-    * Selects the type of command to apply to the configured experiment (e.g., start, stop). Currently cmd just includes start.
+    * Selects the type of command to apply to the configured experiment. Currently cmd just includes start.
      * **Example:**
       
         ```bash
