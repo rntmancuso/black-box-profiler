@@ -57,8 +57,8 @@ mig@500000000 {
 ## Compilation and Module Insertion
 
 Build MemScope using the provided `Makefile`:
-1-Make sure you have the aarch64 gcc compiler installed. On Ubuntu (or Debian-based distros), you can install that via `sudo apt-get install gcc-aarch64-linux-gnu`
-2-Next step is cross-compiling the MemScop's kernel modules from the *kernel_module* folder of the repo. To do that, in its Makefile, replace the path of custom kernel source code `BLDDIR = ` with your own path of the kernel source code. 
+1.Make sure you have the aarch64 gcc compiler installed. On Ubuntu (or Debian-based distros), you can install that via `sudo apt-get install gcc-aarch64-linux-gnu`
+2.Next step is cross-compiling the MemScop's kernel modules from the *kernel_module* folder of the repo. To do that, in its Makefile, replace the path of custom kernel source code `BLDDIR = ` with your own path of the kernel source code. 
 
 ```bash
 make 
