@@ -44,7 +44,9 @@ struct mem_pool {
 	struct gen_pool * alloc_pool;
 	unsigned long pool_kva; /* start kernel virtual addr of memory pool */
 	u64 phys_start;  /* start physical addr of memory pool */
-	u64 size;  /* size of memory pool */	
+	u64 size;  /* size of memory pool */
+  //char pool_type; /*weather is regular memory pool or is in bank granularity mem pool (banked pool)*/
+        int pool_type;
 	unsigned char ready;
 	struct cdev upool_cdev;
 	struct mutex upool_mutex;
@@ -54,6 +56,9 @@ struct upool_map_info {
 	int pool_id;
 	u64 map_start;
 	u64 map_size;
+  /*to support per-page allocation and freeing*/
+       void **page_addrs;   /* array of page_kva*/
+       int page_count;      /* number of pages allocated*/
 };
 
 enum map_type {
@@ -144,6 +149,9 @@ PV-LO 40000000,  0x20000000
 
 /* Number of pools detected in the system */
 extern unsigned int g_pools_count;
+
+/* Number of banked pools detected in the system */
+extern unsigned int g_bankedpools_count;
 
 /* Array of pool descriptors of size g_pool_count */
 extern struct mem_pool *g_pools;

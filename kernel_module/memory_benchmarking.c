@@ -73,7 +73,8 @@ PV-LO 40000000,  0x20000000
 
 /* Number of pools detected in the system */
 unsigned int g_pools_count = 0;
-
+/* Number of banked pools for the regular pool*/
+unsigned int g_bankedpools_count = 0;
 /* Array of pool descriptors of size g_pool_count */
 struct mem_pool *g_pools = NULL;
 EXPORT_SYMBOL(g_pools);
@@ -213,7 +214,7 @@ int detect_mempools(void)
 	int i;
 	
         /* Scanning nodes in the first round for realizing the number
-	 * of nodes with compatible = genpool*/
+	 * of nodes (g_pools_count) with compatible = genpool*/
 	found_node = NULL;
 	do
 	{
@@ -223,11 +224,27 @@ int detect_mempools(void)
 	}
 	while(found_node != NULL);
 
-	/* Now allocate the pool descriptors */
-  	g_pools = kzalloc(g_pools_count * sizeof(struct mem_pool), GFP_KERNEL);
+
+	/* Scanning nodes in the second round for realizing the number
+	 * of banked pools*/
+	/*Baes on the way we add to DTB, we might be able
+	  to have this as if inside the previous loop*/
+	/*found_node = NULL;
+	do
+	{
+	  found_node = of_find_compatible_node(found_node, "memory","genpool");
+		if (found_node)
+			g_bankedpools_count++;
+	}
+	while(found_node != NULL);*/
+
+	g_bankedpools_count = 16; //number of banks  
+
+        /* Now allocate the pool descriptors */
+        g_pools = kzalloc((g_pools_count + g_bankedpools_count) * sizeof(struct mem_pool), GFP_KERNEL);
 	
-	
-	/* Start the second scan round is for actually reading nodes
+
+          /* Start the third scan round is for actually reading nodes
 	  of dtb with compatible = genpool and retrieve the start addr
 	  and the size of each type of memory node to make memory pool
 	  with */
@@ -260,10 +277,10 @@ dealloc_error:
 int initialize_pools(void)
 {
 	int i;
-
+	
 	/* Remap all the physical address apertures in kernel memory
 	 * as cacheable memory. */
-	for (i = 0; i < g_pools_count; ++i)
+	for (i = 0; i < g_pools_count; ++i) //g_pools_count = 6
         {
 		struct mem_pool * pool = &g_pools[i];
 		pool->pool_kva = (unsigned long) memremap(pool->phys_start, pool->size, MEMREMAP_WB);
@@ -274,10 +291,15 @@ int initialize_pools(void)
 			       pool->phys_start);
                         goto error_unmap;
                 }
+		
+		//for now hard coded
+		if (i == 2)
+			g_pools[i].pool_type = 1;
+			
         }
 	
-	/* Create gen_pool allocators for each pool. */
-	for (i = 0; i < g_pools_count; i++)
+	/* Create gen_pool allocators for each regular pool. */
+	for (i = 0; i < g_pools_count; i++)//g_pools_count : regular/main pools, 6:0-5
         {
 		struct mem_pool * pool = &g_pools[i];
 		int res;
@@ -297,13 +319,66 @@ int initialize_pools(void)
 
 		/* If everything goes well, mark this pool as ready. */
 		pool->ready = 1;
-        }
+		
+		/*just for pool_type = banked*/
+		/*virt addr spread over banked pools and not contigious in case we allocate more than 2*/
+		if(pool->pool_type == 1)/*g_pools[i]->type == 1*/ 
+		  {     
+			//unsigned long va = (unsigned long)g_pools[2]->pool_kva;
+			unsigned long va = /*(unsigned long)*/pool->pool_kva; 
+			unsigned long end = va + pool->size;/*g_pools[i]->size;//size of dram area which is pool[2]*/
+			phys_addr_t pa;
+			unsigned int bank_bits;
+			int j;
+		       
+			for (j = g_pools_count; j < g_pools_count+g_bankedpools_count/*14*/; j++)
+			{
+				int res;
+				
+				struct mem_pool * bank_pool = &g_pools[j];
+				bank_pool->alloc_pool = gen_pool_create(PAGE_SHIFT, NUMA_NODE_THIS);
 
+				if(bank_pool->alloc_pool == NULL){
+					pr_err(PREFIX "Unable to create genalloc memory banked pool.\n");
+					goto error_unmap;
+	      
+				}
+	      
+			}
+			//loop for adding the dram mapped area (kva corresponding to dram)-- adding to banked pools
+			//loop over kva, page by page
+				
+			for (va = end-PAGE_SIZE; va >= pool->pool_kva; va -= PAGE_SIZE)
+			{
+				//for this : bankbits of va - change this va to pa, mask it to get bank bits
+				//and starting point is va too
+				pa = virt_to_phys((void *)va);
+			       	//printk("PA is %lx PFN is %lx\n",pa,page_to_pfn(virt_to_page(va)));
+				//pr_info("VA: %p -> PA: %pa\n", (void *)va, &pa);
+				bank_bits = (pa >> 13) & 0xF; //16 banks 
+				//get the bank bits for this address (g_pools[2]->pool_kva+i*PAGE_SIZE)
+				//int bank bits = virt_to_phys((void *)va) & 0001100..00
+				
+				res = gen_pool_add(g_pools[bank_bits+g_pools_count].alloc_pool,
+						   va, PAGE_SIZE, NUMA_NODE_THIS);
+				
+				if (res != 0) {
+					pr_err(PREFIX "Unable to initialize genalloc memory pool.\n");
+					goto error_unmap;
+				}
+				//pool ready for banked pool
+			}
+		}
+	}
+	
         return 0;
 
 error_unmap:
 	/* TODO actually unmap partially initialized pools before exiting */
-	return -1;	
+	/*freeing the whole pool strated from kva to the size?
+	  bc we dont know whic one failed
+	*/
+	return -1;
 }
 
 int alloc_map_cache_buffer (struct activity_info * actInfo, int cpus) 
@@ -1312,7 +1387,7 @@ static int __init mm_exp_load(void) {
 		pr_err(PREFIX "ERROR: Unable to correctly initialize interface files.\n");
 		return -EINVAL;	
 	}
-
+	
 	/* Start with the detection of the memory pools in the system. */
 	res = detect_mempools();
 
@@ -1321,15 +1396,16 @@ static int __init mm_exp_load(void) {
 		err_debugfs_interface_exit();
 		return -EINVAL;
 	}
-
+	
 	/* Go ahead and perform any initialization for the detected memory pools */
 	res = initialize_pools();
+	printk("res is %d\n",res);
 	if (res < 0) {
 		err_debugfs_interface_exit();
 		pr_err(PREFIX "ERROR: Unable to correctly initialize memory pools.\n");
 		return -EINVAL;
 	}
-
+	
 	res = initialize_user_pools();
 	if (res < 0) {
 		err_debugfs_interface_exit();

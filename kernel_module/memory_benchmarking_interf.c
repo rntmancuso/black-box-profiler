@@ -441,7 +441,8 @@ static int upool_open (struct inode * inodep, struct file * filep)
 	minfo->pool_id = pool_id;
 	minfo->map_start = 0;
 	minfo->map_size = 0;
-	
+	//test
+	//minfo->page_addrs =
 	filep->private_data = minfo;
 	
 	return 0;
@@ -463,7 +464,7 @@ static int upool_mmap(struct file * filep, struct vm_area_struct * vma)
 	}
 	
 	mutex_lock(&g_pools[pool_id].upool_mutex);
-	
+	//contigious
 	page_kva = (u64 *) gen_pool_alloc(g_pools[pool_id].alloc_pool, size);
 
 	if (!page_kva) {
@@ -478,7 +479,7 @@ static int upool_mmap(struct file * filep, struct vm_area_struct * vma)
 		gen_pool_free(g_pools[pool_id].alloc_pool, (unsigned long)page_kva, size);
 	} else {
 		minfo->map_start = (u64) page_kva;
-		minfo->map_size = size;
+		minfo->map_size = size /*PAGE_SIZE*/; //this is inof for user allo
 	}
 	
 	mutex_unlock(&g_pools[pool_id].upool_mutex);
@@ -486,19 +487,128 @@ static int upool_mmap(struct file * filep, struct vm_area_struct * vma)
 	return ret;
 }
 
-static int upool_release(struct inode * inodep, struct file * filep)
+static int upool_banked_mmap(struct file * filep, struct vm_area_struct * vma)
+{
+	//in case pool_type is banked, add this to init
+	int ret;
+	//it is gotten from the user
+	struct upool_map_info * minfo =
+		(struct upool_map_info *)filep->private_data; //filled during open
+
+	int pool_id = minfo->pool_id; //from user
+	size_t size = (size_t)(vma->vm_end - vma->vm_start);
+	int num_pages = size/PAGE_SIZE;
+	unsigned long user_addr = vma->vm_start;
+	u64 * page_kva;
+	struct page * page;
+	int i;
+	if (minfo->map_size != 0) {
+		return -EINVAL;
+	}
+	//user just passes the buffer size, and number of pages would be calculated here
+	void **page_addrs = kmalloc_array(num_pages, sizeof(void *), GFP_KERNEL);
+	if (!page_kva) {
+		ret = -ENOMEM;
+	}
+
+	mutex_lock(&g_pools[pool_id].upool_mutex);
+
+	// for beginning of vma to end , page by page
+	for (i = 0; i < num_pages; i++) {
+
+		//pool_id should be between 6-13 if the pool_type is banked
+		//page_kva is beggining of just a page (addr,ptr)
+		page_kva = (u64 *) gen_pool_alloc(g_pools[pool_id].alloc_pool, PAGE_SIZE);
+
+		if (!page_kva) {
+			mutex_unlock(&g_pools[pool_id].upool_mutex);
+			return -EINVAL; //why not -ENOMEM
+			goto fail_alloc;
+		}
+	
+		page = virt_to_page(page_kva); //for one page
+		//map a physical page frame into user-space virtual memory. each start is after the prev map
+		ret = remap_pfn_range(vma, user_addr,
+				      page_to_pfn(page), PAGE_SIZE, vma->vm_page_prot);
+		if(i < 10)
+		  printk("PFN : %lx\n",page_to_pfn(page));
+		if (ret != 0) {
+			gen_pool_free(g_pools[pool_id].alloc_pool, (unsigned long)page_kva, PAGE_SIZE);
+			/*frees the one page just allocated in this iteration, and goto fail_alloc then frees all previously allocated pages.*/
+			goto fail_alloc;
+		}
+
+		page_addrs[i] = page_kva;
+		user_addr += PAGE_SIZE;
+		//end of for
+	}  
+
+	minfo->page_addrs = page_addrs;
+	minfo->page_count = num_pages;
+	minfo->map_size = size;
+
+	
+	mutex_unlock(&g_pools[pool_id].upool_mutex);
+      
+	return ret;
+
+fail_alloc:
+	int j;
+	// Free any successfully allocated pages
+	for (j = 0; j < i; j++) {
+		gen_pool_free(g_pools[pool_id].alloc_pool,
+			      (unsigned long)page_addrs[j],
+			      PAGE_SIZE);}
+	kfree(page_addrs);
+	mutex_unlock(&g_pools[pool_id].upool_mutex);
+	return ret;
+}
+
+static int upool_banked_release(struct inode * inodep, struct file * filep)//upool unmap
+{
+	int i;
+	struct upool_map_info * minfo =
+		(struct upool_map_info *)filep->private_data;
+
+	int pool_id = minfo->pool_id;
+	mutex_lock(&g_pools[pool_id].upool_mutex);
+
+	if (minfo->map_size != 0) {
+	  //	return -EINVAL;
+	  //}
+		for (i = 0; i < minfo->page_count; i++) {
+			gen_pool_free(g_pools[pool_id].alloc_pool,
+				      (unsigned long)minfo->page_addrs[i],PAGE_SIZE);
+		}
+	
+		//shared state protected by the g_pools[pool_id].upool_mutex.
+		kfree(minfo->page_addrs);
+		minfo->page_addrs = NULL;
+		minfo->page_count = 0;
+		minfo->map_size = 0;
+	}
+		mutex_unlock(&g_pools[pool_id].upool_mutex);
+
+		kfree(minfo);
+		filep->private_data = NULL;
+	
+		return 0;
+	
+}
+
+static int upool_release(struct inode * inodep, struct file * filep)//upool unmap
 {
 	struct upool_map_info * minfo =
 		(struct upool_map_info *)filep->private_data;
 
 	int pool_id = minfo->pool_id;
 	mutex_lock(&g_pools[pool_id].upool_mutex);
-	 	
+
 	if (minfo->map_size != 0) {
 		gen_pool_free(g_pools[pool_id].alloc_pool,
-			      (unsigned long)minfo->map_start, minfo->map_size);
+			      (unsigned long)minfo->map_start,minfo->map_size);
 	}
-	
+        
 	mutex_unlock(&g_pools[pool_id].upool_mutex);
 
 	kfree(minfo);
@@ -506,13 +616,24 @@ static int upool_release(struct inode * inodep, struct file * filep)
 	
 	return 0;
 }
+	
 
 static const struct file_operations upool_fops = {
 	.owner = THIS_MODULE,
 	.open = upool_open,
 	.release = upool_release,
 	.mmap = upool_mmap,
+	/*adding file operations*/
 };
+
+static const struct file_operations upool_banked_fops = {
+	.owner = THIS_MODULE,
+	.open = upool_open,
+	.release = upool_banked_release,
+	.mmap = upool_banked_mmap,
+	/*adding file operations*/
+};
+
 
 
 void err_debugfs_interface_exit(void)
@@ -573,10 +694,12 @@ int __init initialize_user_pools(void)
 {
 	int i;
 	dev_t curr_dev;
+       
 
-	alloc_chrdev_region(&upool_dev_num, 0, g_pools_count, UPOOL_NAME_MAJOR);
+	alloc_chrdev_region(&upool_dev_num, 0, g_pools_count + g_bankedpools_count, UPOOL_NAME_MAJOR);
 	upool_class = class_create(THIS_MODULE, UPOOL_CLASS_NAME);
 
+        // First loop: initialize regular pools
 	for (i = 0; i < g_pools_count; ++i) {
 		cdev_init(&g_pools[i].upool_cdev, &upool_fops);
 		curr_dev = MKDEV(MAJOR(upool_dev_num), MINOR(upool_dev_num) + i);
@@ -584,7 +707,21 @@ int __init initialize_user_pools(void)
 		cdev_add(&g_pools[i].upool_cdev, curr_dev, 1);
 		g_pools[i].upool_mutex = (struct mutex)__MUTEX_INITIALIZER(g_pools[i].upool_mutex);
 		mutex_init(&g_pools[i].upool_mutex);
+
+		// If type is 1, initialize banked sub-pools
+		if(g_pools[i].pool_type == 1)//g_pools[2]->banked or 1
+		{
+			int j;
+		       	for (j = g_pools_count ; j < g_pools_count+g_bankedpools_count; ++j) {
+			       	cdev_init(&g_pools[j].upool_cdev, &upool_banked_fops);
+		       		curr_dev = MKDEV(MAJOR(upool_dev_num), MINOR(upool_dev_num) + j);
+	       			device_create(upool_class, NULL, curr_dev, NULL, UPOOL_NAME_MINOR, j);
+       				cdev_add(&g_pools[j].upool_cdev, curr_dev, 1);
+				mutex_init(&g_pools[j].upool_mutex);
+			}
+		}
 	}
+
 
 	return 0;
 }
@@ -595,11 +732,21 @@ void __exit exit_user_pools(void)
 	for (i = 0; i < g_pools_count; ++i) {
 		mutex_destroy(&g_pools[i].upool_mutex);
 		device_destroy(upool_class, MKDEV(MAJOR(upool_dev_num), MINOR(upool_dev_num) + i));
-		cdev_del(&g_pools[i].upool_cdev);			       
-	}
+		cdev_del(&g_pools[i].upool_cdev);
 
+	        if(g_pools[i].pool_type == 1)//i dont want to destroy/del on uninitial mem
+		{
+			int j;
+			for (j = g_pools_count; j < g_pools_count + g_bankedpools_count; ++j) {
+				mutex_destroy(&g_pools[j].upool_mutex);
+				device_destroy(upool_class, MKDEV(MAJOR(upool_dev_num), MINOR(upool_dev_num) + j));
+				cdev_del(&g_pools[j].upool_cdev);
+			}
+		}
+	}
 	class_destroy(upool_class);
-	unregister_chrdev_region(upool_dev_num, g_pools_count);
+	unregister_chrdev_region(upool_dev_num, g_pools_count + g_bankedpools_count);
+
 }
 
 void __exit debugfs_interface_exit(void)
